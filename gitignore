@@ -1,0 +1,64 @@
+# ─── SECRETS — never commit these ───────────────────────────────
+.env
+.env.*
+*.env
+.envrc
+secrets/
+*.key
+*.pem
+*.p12
+*.token
+token.json
+credentials.json
+client_secret*.json
+service-account*.json
+youtube_token*.json
+oauth*.json
+
+# ─── Python ─────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ─── Node / JS ──────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ─── Large media & build artefacts (keep out of git) ────────────
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.flac
+*.aac
+master*.mp4
+_master_tmp.mp4
+*_tmp.*
+assets/clips/
+build/
+dist/
+
+# ─── Databases, logs, container volumes ─────────────────────────
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+pgdata/
+redis-data/
+*-data/
+
+# ─── OS / editor noise ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
