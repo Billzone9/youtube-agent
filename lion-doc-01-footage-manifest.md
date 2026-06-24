@@ -1,93 +1,43 @@
 # Lion Documentary #01 — Footage Manifest & Provenance Log
 
-Working footage list for doc #1: a tight **~10-minute single-species lion film** whose job is to
-prove the whole pipeline end to end. Claude can't see video, so **you view and pick the clips** —
-this manifest seeds each beat with specific candidates plus the exact search pages to browse, and
-gives you the provenance fields to record. (The automated pipeline will later emit this as JSON;
-for the hand-cranked proof, markdown is easier to review.)
+**Status: footage selected (locked for first cut).** This is now the provenance record / audit
+trail for doc #1 — a tight ~10-minute single-species lion film. Twenty clips across seven beats.
 
-## How to use this
+## Licensing (carry these)
+- Pexels clips -> **Pexels License**; Pixabay clip -> **Pixabay Content License**. Both: free for
+  commercial/YouTube use, **no attribution required**; raw clips not resold standalone (our edited
+  doc is a new work, so we're clean).
+- **No music from these sites** (Content ID risk). Audio stays synthetic, like Phase 0.
+- The URL + contributor recorded per clip is our defence if a clip was ever mis-uploaded.
 
-1. Click a clip/search link, watch it, judge quality. **Prefer genuinely wild footage** — skip
-   zoo/captive shots, sculptures, green-screen, logos, or anything staged.
-2. Download at **1080p or 4K** (each Pexels/Pixabay clip page lets you choose the resolution).
-3. Save into one folder, e.g. `~/youtube-agent/assets/lion-doc-01/clips/`, with tidy names like
-   `beat2_lion_closeup_nickype.mp4`.
-4. Record provenance for every clip you keep (table at the bottom) — this is our claim-defence audit trail.
+> Tip: rename your downloaded files to the suggested filenames below — it makes the FFmpeg
+> assembly step much cleaner. Contributor cells marked "(see page)" can be filled from the URL in a
+> minute if you want a complete record; the URL itself already resolves to the contributor + license.
 
-## Licensing rules (carry these)
+## Provenance log
 
-- Pexels clips → **Pexels License**; Pixabay clips → **Pixabay Content License**. Both: free for
-  commercial/YouTube use, **no attribution required**, but you may not resell the raw clip
-  standalone (our edited, narrated doc is a new work, so we're clean).
-- **No music from these sites** — their music can trigger Content ID. Audio stays synthetic, like Phase 0.
-- Saving the URL + contributor for each clip is what protects us if a "free" clip was ever
-  mis-uploaded by someone who didn't own it.
+| # | Beat | Suggested filename | Source | Contributor | URL | Res | Notes |
+|---|------|--------------------|--------|-------------|-----|-----|-------|
+| 1 | 1 — Cold open | beat1_giraffe_greenfield.mp4 | Pexels | (see page) | https://www.pexels.com/video/a-giraffe-standing-in-the-middle-of-a-green-field-25753512/ |  | establishing — the wider savanna |
+| 2 | 1 — Cold open | beat1_giraffes_wild.mp4 | Pexels | (see page) | https://www.pexels.com/video/giraffes-in-the-wild-9448995/ |  | establishing |
+| 3 | 1 — Cold open | beat1_savanna_aerial.mp4 | Pexels | (see page) | https://www.pexels.com/video/stunning-aerial-view-of-african-savanna-33660366/ |  | aerial wide — strong opener |
+| 4 | 1 — Cold open | beat1_field_trees_grass.mp4 | Pexels | (see page) | https://www.pexels.com/video/a-field-with-trees-and-grass-in-the-distance-20316284/ |  | landscape |
+| 5 | 1 — Cold open | beat1_savanna_sunrise.mp4 | Pexels | (see page) | https://www.pexels.com/video/serene-african-savanna-sunrise-reflection-36441545/ |  | dawn light — sets mood |
+| 6 | 2 — The lion | beat2_lion_walking_savannah.mp4 | Pexels | Sismiko Eka Putra | https://www.pexels.com/video/majestic-lion-walking-in-african-savannah-31150342/ |  | close, walking |
+| 7 | 2 — The lion | beat2_lion_resting_closeup.mp4 | Pexels | Nicky Pe | https://www.pexels.com/video/video-of-a-lion-8476160/ |  | close-up at rest |
+| 8 | 2 — The lion | beat2_lion_resting_habitat.mp4 | Pexels | (see page) | https://www.pexels.com/video/majestic-lion-resting-in-natural-habitat-37251364/ |  | at rest |
+| 9 | 3 — The pride | beat3_lion_lioness_fields.mp4 | Pexels | Zlatin Georgiev | https://www.pexels.com/video/a-lion-and-lioness-in-the-fields-5607553/ |  | lion + lioness (also Beat 4) |
+| 10 | 3 — The pride | beat3_lion_lioness2.mp4 | Pexels | (see page) | https://www.pexels.com/video/lowe_lowin-16728725/ |  | pair / social |
+| 11 | 3 — The pride | beat3_lioness_savanna.mp4 | Pexels | (see page) | https://www.pexels.com/video/lioness-in-african-savanna-wildlife-footage-34970161/ |  | lioness |
+| 12 | 4 — The hunt | (reuse #9) beat3_lion_lioness_fields.mp4 | Pexels | Zlatin Georgiev | https://www.pexels.com/video/a-lion-and-lioness-in-the-fields-5607553/ |  | reused — cut a different moment |
+| 13 | 4 — The hunt | beat4_lions_wild.mp4 | Pexels | Coverr | https://www.pexels.com/video/lions-at-the-wild-853900/ |  | lions roaming |
+| 14 | 5 — Cubs | beat5_cub_on_rock.mp4 | Pexels | Gal Shapira | https://www.pexels.com/video/close-up-shot-of-a-lion-9557810/ |  | cub on a rock |
+| 15 | 5 — Cubs | beat5_lion_cubs.mp4 | Pexels | (see page) | https://www.pexels.com/video/lowenbabys-18553643/ |  | cubs |
+| 16 | 6 — The roar | beat6_lion_roaring.mp4 | Pexels | (see page) | https://www.pexels.com/video/majestic-lion-roaring-in-natural-habitat-38156859/ |  | wild roar — key shot |
+| 17 | 6 — The roar | beat6_lion_on_rock.mp4 | Pexels | Mikhail Nilov | https://www.pexels.com/video/lion-standing-on-a-rock-7710516/ |  | standing, territorial |
+| 18 | 6 — The roar | beat6_lion_mane_pixabay.mp4 | Pixabay | (see page) | https://pixabay.com/videos/lion-nature-animal-predator-mane-300312/ |  | mane / portrait |
+| 19 | 7 — Close | beat7_golden_sunset.mp4 | Pexels | (see page) | https://www.pexels.com/video/a-golden-sunset-9222045/ |  | dusk |
+| 20 | 7 — Close | beat7_lion_strolling.mp4 | Pexels | (see page) | https://www.pexels.com/video/majestic-lion-strolling-in-african-savanna-30393112/ |  | strolling, golden hour |
 
----
-
-## The film — 7 beats (~10 min)
-
-### Beat 1 — Cold open: the savanna at dawn  (~45–60s)
-Role: set place and mood — wide landscapes, grass, acacia, golden light. No lions yet.
-Browse and pick 3–5 wide shots:
-- Savanna (general): https://www.pexels.com/search/videos/african%20savanna/
-- Sunrise light: https://www.pexels.com/search/videos/savanna%20sunrise/
-
-### Beat 2 — The lion introduced  (~60–90s)
-Role: reveal the lion — a male with mane, close-ups, presence.
-Seed clips:
-- Close-up of a lion resting — *Nicky Pe* (Pexels): https://www.pexels.com/video/video-of-a-lion-8476160/
-- Lion walking through savannah, close-up — *Sismiko Eka Putra* (Pexels): https://www.pexels.com/video/majestic-lion-walking-in-african-savannah-31150342/
-- More: https://www.pexels.com/search/videos/lion/
-
-### Beat 3 — The pride & social life  (~90–120s)
-Role: the pride as a family — lionesses, resting together, grooming, the group.
-Seed clips:
-- Lions roaming the wild African savanna — *Coverr* (Pexels): https://www.pexels.com/video/lions-at-the-wild-853900/
-- A lion and lioness in the fields — *Zlatin Georgiev* (Pexels): https://www.pexels.com/video/a-lion-and-lioness-in-the-fields-5607553/
-- More: https://www.pexels.com/search/videos/lion%20pride/
-
-### Beat 4 — The hunt  (~90–120s)
-Role: lionesses as hunters — movement, focus, stalking through grass.
-Note: true kills are rare on free stock; we narrate the hunt over stalking/walking footage.
-Seed clips:
-- Lion walking through savannah — *Sismiko Eka Putra* (Pexels): https://www.pexels.com/video/majestic-lion-walking-in-african-savannah-31150342/
-- Lioness in green savanna — *Zlatin Georgiev* (Pexels): https://www.pexels.com/video/a-lion-and-lioness-in-the-fields-5607553/
-- More: https://www.pexels.com/search/videos/lioness/
-
-### Beat 5 — Cubs & the next generation  (~60–90s)
-Role: tenderness — cubs playing, resting, with their mothers.
-Seed clip:
-- Lion cub lying on a rock — *Gal Shapira* (Pexels): https://www.pexels.com/video/close-up-shot-of-a-lion-9557810/
-- More: https://www.pexels.com/search/videos/lion%20cubs/
-
-### Beat 6 — The roar & territory  (~45–60s)
-Role: power — the male roaring, asserting territory.
-Caveat: roar clips skew heavily toward zoo/captive and stylised — pick a genuinely wild one carefully.
-Browse:
-- https://www.pexels.com/search/videos/lion%20roar/
-- https://pixabay.com/videos/search/lion%20roar/
-Optional mood shot (forest, not savanna — use only if it fits): Lion in sunlit forest — *Mikhail Nilov* (Pexels): https://www.pexels.com/video/lion-at-the-forest-7710515/
-
-### Beat 7 — Golden-hour close  (~45–60s)
-Role: reflective close — the pride at rest, dusk, the eternal cycle.
-Browse:
-- https://www.pexels.com/search/videos/savanna%20sunset/
-- Reuse any warm-light resting-lion clips from Beats 2–3.
-
----
-
-## Provenance log (fill one row per clip you keep)
-
-| # | Beat | Local filename | Source | Contributor | URL | Resolution | Notes |
-|---|------|----------------|--------|-------------|-----|------------|-------|
-|   |      |                |        |             |     |            |       |
-
----
-
-## What Claude needs back from you
-
-- Download your picks, fill the table (rough is fine), and tell me **roughly how many clips per
-  beat you got and what they show**. That's what I write the footage-led script against.
-- Flag any beat where you couldn't find something good, and I'll help track down alternatives.
+Fill the **Res** column with the resolution you download (1080p / 4K), and swap "(see page)" for the
+contributor name when convenient. Otherwise this is complete.
