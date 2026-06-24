@@ -91,6 +91,9 @@ Build on the Mac (Phase 0 pattern), deploy artefacts to the VPS.
 - **Voice = original, not impersonation:** generic deep British male; never clone a real narrator.
 - **Footage-led scripting:** source footage first, then write to fit it. Selective, cost-gated AI
   generation only for the rare must-have shot — never whole AI-generated videos.
+- **Script voice (house style):** narration is written like a poet speaking the scene aloud —
+  lush, vivid, and passionate on the surface, with accurate, well-grounded fact carried
+  underneath. Established with the lion film; applies to every script.
 - **Human approval gate:** nothing publishes without a Telegram approve.
 - **Genuine value + variation:** no templated mass output (anti-demonetisation, spec §12).
 - **Cost governor:** progressive ceiling £200 (m1) -> £350 (m2) -> £500 (m3+); per-job estimate;
