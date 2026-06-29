@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ytagent-postgres
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - ytagent-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  telegram-bot:
+    build: ./telegram_bot
+    container_name: ytagent-telegram
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - postgres
+
+volumes:
+  ytagent-pgdata:
