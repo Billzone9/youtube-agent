@@ -10,14 +10,22 @@
 
 ---
 
-## 1. Purpose & overview  `[VERIFY wording]`
+## 1. Purpose & overview
 
-An autonomous, multi-channel YouTube agent that produces and runs channels with minimal human
-intervention, with Banks as creative director. The agent is a **force-multiplier, not an
-unsupervised content firehose**: it researches, scripts, produces, localises, and publishes — but
-Banks approves what matters via Telegram. It is built **general** so that any channel Banks
-creates and hands over is onboarded and run by the same engine. Goal: grow channels toward
-monetisation and generate revenue, treating the early months explicitly as investment.
+A **powerful, persistent, fully autonomous** multi-channel YouTube agent whose single mission is to
+**conquer YouTube and MAKE money, not consume it**. It runs **24/7, all year round**, managing every
+channel Banks creates and hands to it — researching, scripting, producing (long-form **and**
+short-form), localising, streaming, publishing, promoting, and managing each channel **end-to-end on
+its own**. Banks is the creative director: the agent acts **autonomously by default** and requires his
+approval **only for specific key actions** — publishing and spending money — surfaced via Telegram so
+he stays in control without being in the loop on everything. This inversion is the point: an
+**autonomous operator with two narrow human gates**, not a gated assistant that waits for permission
+at each step. It is built **general** — any new channel is onboarded (an interview to learn its
+purpose) and run by the same engine, each with its own purpose, tone, cadence, languages, and
+strategy, and behaviour on one channel never auto-replicates to others. The agent is unique,
+innovative, and relentless, and it wins through **genuine quality and variation** — the only approach
+that both survives YouTube's inauthentic-content enforcement and actually grows an audience — never
+templated mass output. The early months are explicitly investment.
 
 ## 2. Scope & channels  `[VERIFY wording]`
 
@@ -217,3 +225,65 @@ self-hosted FFmpeg streaming (cheaper, needs supervision — proven Phase 0) vs 
 - Self-hosted vs managed streaming as channels scale.
 - Exact provider/model choices and prices (finalised at build time).
 - MLA launch languages per channel (data-driven).
+
+---
+
+## 14. Confirmed additions (2026-06-30)
+
+These extend and sharpen the design above. They are first-class platform capabilities, not
+options. Each notes the existing sections it touches. From here they are part of the canonical spec.
+
+### 14.1 General-platform framing (reaffirmed)
+The agent is a GENERAL, multi-channel YouTube automation platform with a no-code control dashboard —
+not a single-niche tool. Every channel Banks creates is onboarded and run by the same engine
+(§1, §2, §4.2). The wildlife channel is the FIRST channel used to prove each capability; it is the
+proving ground, not the product. All architecture must be channel-general (channel registry,
+per-channel config, channel-scoped data) and dashboard-ready (config stored as data, editable with
+no code) from the first build slice — never retrofitted.
+
+### 14.2 ROI and ROAS (extends §3, §4.8, §4.10)
+Reporting and the dashboard display BOTH ROI (overall net position: total revenue − all costs) and
+ROAS (return on ad spend: revenue attributable to paid promotion ÷ ad spend). The cost/ROI governor
+tracks ROAS on every paid campaign, not just total spend, so paid promotion is judged on the return
+it actually produces. ROAS is reported per campaign and per channel.
+
+### 14.3 All revenue streams tracked (extends §3, §4.8, §7)
+True ROI/ROAS requires all income, not just AdSense. The agent tracks EVERY revenue stream — AdSense
+(via YouTube Analytics), affiliate, sponsorship, and digital/own-product sales — via dashboard input
+and/or integrations where available. The data model holds a revenue ledger keyed by channel and
+stream; the dashboard shows revenue broken down by stream alongside the true net position.
+
+### 14.4 Multiple content formats incl. native Shorts (extends §4.3, §4.8)
+Beyond long-form, the agent produces native short-form vertical content (YouTube Shorts, and the
+equivalent for enabled social platforms) as a first-class content type — short-form drives discovery
+and views. The production pipeline supports multiple output formats and aspect ratios (16:9
+long-form and 9:16 vertical) per channel; a channel's playbook can schedule both. Format mix is a
+per-channel setting.
+
+### 14.5 Competitor & trend analysis (extends §4.3 research, §7 learning, §4.8 dashboard)
+The agent continuously monitors what is trending in each channel's niche and what competitors are
+doing, and feeds that into what it decides to produce next. This is an always-on input to the
+orchestrator's playbook, surfaced on the dashboard (trending topics, competitor activity, content
+gaps/opportunities), and combined with the channel's own performance data in the learning loop.
+
+### 14.6 Comment & community management (new component; gating per §6)
+The agent reads and responds to comments and runs community-tab posts, per channel. Because
+per-comment approval does not scale, the default is autonomous within guardrails — on-brand tone, no
+commitments or claims it cannot keep, and escalate anything sensitive (complaints, legal, YMYL) to
+Banks. The approval policy is configurable per channel (auto / draft-for-approval / off). Community
+posts (polls, updates, image posts) are agent-drafted; gating is per channel.
+
+### 14.7 Social cross-posting — per-channel, opt-in (extends §4.11)
+YouTube is the PRIMARY platform for every channel. In addition, the agent can cross-post videos and
+Shorts AND make native posts to TikTok, Instagram/Reels, and Facebook — but ONLY for channels where
+Banks has enabled it. Social distribution is a per-channel setting: each channel specifies which
+external platforms (if any) it publishes to. Some channels opt in (e.g. a kids' channel sharing
+videos and Shorts widely); others stay YouTube-only (e.g. the Deep Blue Calm ambient stream, which
+gains nothing from social cross-posting). A new channel defaults to none until Banks enables it. All
+cross-posting still obeys the human gate on publishing and the no-buying-engagement rule (§4.11, §6).
+
+### 14.8 Budget is global, not per-channel (clarifies §4.10)
+The progressive monthly ceiling (£200 → £350 → £500) is a single GLOBAL cap across all channels
+combined, not per channel. The governor tracks spend per channel for ROI/ROAS reporting, but the
+hard ceiling it enforces is the global total. (Per-channel sub-limits may be added later as a
+dashboard control, but the enforced wall is global.)
