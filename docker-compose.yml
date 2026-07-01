@@ -15,12 +15,17 @@ services:
       retries: 5
 
   telegram-bot:
-    build: ./telegram_bot
+    build:
+      context: .
+      dockerfile: telegram_bot/Dockerfile
     container_name: ytagent-telegram
     restart: unless-stopped
     env_file: .env
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./assets:/app/assets:ro
 
 volumes:
   ytagent-pgdata:
