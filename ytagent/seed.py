@@ -101,7 +101,7 @@ def run_seed() -> None:
             vps_reconciled = vps_annual is not None
             vps_annual = vps_annual if vps_annual is not None else Decimal("120.00")  # FLAGGED estimate
             _upsert_cost(
-                conn, key=f"vps-outlay:{term_start.isoformat()}", channel_id=None, job_id=None,
+                conn, key="vps-outlay", channel_id=None, job_id=None,
                 category="infrastructure", is_amortised=False, provider="Hostinger",
                 description="VPS annual outlay (KVM 2)", amount_gbp=vps_annual, currency="GBP",
                 amount_original=vps_annual, fx_rate=None, credits=None,

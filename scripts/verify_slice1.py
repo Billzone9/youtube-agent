@@ -26,13 +26,18 @@ def main() -> None:
             print(f"  £{r['amount_gbp']:>7} {r['currency']}  {r['category']:<14}{am}  "
                   f"{r['period_month']}  [{flag}]  {r['description']}")
 
+        # accrual view (excludes the capital lump; uses amortised) vs the cash outlay recorded
+        lump = "(category='infrastructure' AND is_amortised=false)"
         tot = conn.execute(
-            "SELECT (SELECT COALESCE(SUM(amount_gbp),0) FROM cost_ledger) c, "
+            f"SELECT (SELECT COALESCE(SUM(amount_gbp),0) FROM cost_ledger WHERE NOT {lump}) op, "
+            f"(SELECT COALESCE(SUM(amount_gbp),0) FROM cost_ledger WHERE {lump}) cap, "
             "(SELECT COALESCE(SUM(amount_gbp),0) FROM revenue_ledger) r, "
-            "(SELECT COALESCE(SUM(amount_gbp),0) FROM cost_ledger "
-            " WHERE period_month=date_trunc('month',now())::date) m").fetchone()
-        print(f"\nnet position: cost £{tot['c']}  revenue £{tot['r']}  net £{tot['r']-tot['c']}")
-        print(f"month-to-date spend: £{tot['m']}")
+            f"(SELECT COALESCE(SUM(amount_gbp),0) FROM cost_ledger "
+            f" WHERE period_month=date_trunc('month',now())::date AND NOT {lump}) m").fetchone()
+        print(f"\noperating cost to date (accrual, excl. capital): £{tot['op']}")
+        print(f"capital outlay recorded (cash, e.g. annual VPS): £{tot['cap']}")
+        print(f"revenue: £{tot['r']}   net (revenue - operating): £{tot['r']-tot['op']}")
+        print(f"month-to-date operating spend: £{tot['m']}")
 
         print("\njobs:")
         for r in conn.execute("SELECT id, type, status FROM jobs ORDER BY id").fetchall():

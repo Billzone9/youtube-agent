@@ -7,10 +7,16 @@ from decimal import Decimal
 
 
 async def month_to_date_cost_gbp(conn) -> Decimal:
-    """Total cost (all channels) recorded in the current calendar month."""
+    """Honest monthly cost (all channels) for the current calendar month.
+
+    Excludes the capital lump (a non-amortised infrastructure outlay like the annual VPS): that
+    cost is represented month-by-month by its amortised rows, so counting the lump too would
+    double-count and make the term-start month look falsely expensive.
+    """
     cur = await conn.execute(
         "SELECT COALESCE(SUM(amount_gbp), 0) AS total FROM cost_ledger "
-        "WHERE period_month = date_trunc('month', now())::date"
+        "WHERE period_month = date_trunc('month', now())::date "
+        "AND NOT (category = 'infrastructure' AND is_amortised = false)"
     )
     row = await cur.fetchone()
     return row["total"]
