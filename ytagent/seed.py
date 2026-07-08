@@ -20,6 +20,7 @@ from .config import load_settings
 from .db import sync_connect
 
 WILDLIFE_CONFIG = {
+    "youtube_handle": "@TheTalesofWildlifeandNature",
     "niche": "wildlife & nature documentaries",
     "purpose": "lush, accurate long-form wildlife films that grow watch-hours toward monetisation",
     "tone": "poetic narration on the surface, accurate fact underneath",
@@ -80,7 +81,7 @@ def run_seed() -> None:
             conn.execute(
                 "INSERT INTO channels (slug, name, config) VALUES (%s, %s, %s) "
                 "ON CONFLICT (slug) DO NOTHING",
-                ["wildlife", "Wildlife & Nature", Jsonb(WILDLIFE_CONFIG)],
+                ["wildlife", "The Tales of Wildlife and Nature", Jsonb(WILDLIFE_CONFIG)],
             )
             ch = conn.execute("SELECT id FROM channels WHERE slug='wildlife'").fetchone()
             channel_id = ch["id"]

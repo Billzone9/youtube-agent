@@ -21,6 +21,7 @@ from ytagent.artifacts import lion_video_meta
 from ytagent.config import load_settings
 from ytagent.migrations.runner import run_migrations
 from ytagent.notifier import StubNotifier
+from ytagent.publish import DryRunPublisher
 from ytagent.seed import run_seed
 
 PASS, FAIL = "✅", "❌"
@@ -57,8 +58,10 @@ async def run() -> None:
         # --- submit -> APPROVE ---
         print("[3] submit -> approve")
         notifier = StubNotifier()
+        publisher = DryRunPublisher()
         res = await orchestrator.submit_video_for_approval(
-            conn, notifier, channel=ch, video_meta=lion_video_meta(), chat_id=settings.chat_id
+            conn, notifier, channel=ch, video_meta=lion_video_meta(), chat_id=settings.chat_id,
+            publish_mode=publisher.mode,
         )
         job_id, video_id, appr_id = res["job"]["id"], res["video"]["id"], res["approval"]["id"]
         check("notifier received 1 approval request", len(notifier.requests) == 1)
@@ -69,7 +72,7 @@ async def run() -> None:
         check("approval message_id stored", appr["telegram_message_id"] is not None)
 
         dec = await orchestrator.handle_decision(
-            conn, notifier, approval_id=appr_id, decision="approve", decided_by="banks"
+            conn, notifier, publisher, approval_id=appr_id, decision="approve", decided_by="banks"
         )
         check("decision handled", dec.get("handled") is True)
         job = await repo.jobs.get(conn, job_id)
@@ -87,7 +90,7 @@ async def run() -> None:
 
         # stale callback: approving again is a no-op
         stale = await orchestrator.handle_decision(
-            conn, notifier, approval_id=appr_id, decision="approve", decided_by="banks"
+            conn, notifier, publisher, approval_id=appr_id, decision="approve", decided_by="banks"
         )
         check("stale callback ignored", stale.get("handled") is False, stale.get("reason", ""))
 
@@ -101,10 +104,12 @@ async def run() -> None:
         # --- submit -> REJECT ---
         print("[4] submit -> reject")
         res2 = await orchestrator.submit_video_for_approval(
-            conn, notifier, channel=ch, video_meta=lion_video_meta(), chat_id=settings.chat_id
+            conn, notifier, channel=ch, video_meta=lion_video_meta(), chat_id=settings.chat_id,
+            publish_mode=publisher.mode,
         )
         dec2 = await orchestrator.handle_decision(
-            conn, notifier, approval_id=res2["approval"]["id"], decision="reject", decided_by="banks"
+            conn, notifier, publisher, approval_id=res2["approval"]["id"], decision="reject",
+            decided_by="banks"
         )
         check("reject handled", dec2.get("handled") is True)
         job2 = await repo.jobs.get(conn, res2["job"]["id"])

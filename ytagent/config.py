@@ -34,6 +34,10 @@ class Settings:
     # Telegram
     bot_token: str
     chat_id: str  # the single allow-listed operator (Banks)
+    # YouTube OAuth (optional — the dry-run path runs without them; present after youtube_auth)
+    youtube_client_id: str | None = None
+    youtube_client_secret: str | None = None
+    youtube_refresh_token: str | None = None
     # Honest-baseline constants (the lion film's known costs; subscription/VPS supplied at seed time)
     lion_music_credits: int = 1500
     # Budget (global, month-1 tier) — seeded into platform_settings
@@ -54,6 +58,7 @@ class Settings:
             "pg_db": self.pg_db,
             "bot_token_set": bool(self.bot_token),
             "chat_id_set": bool(self.chat_id),
+            "youtube_configured": bool(self.youtube_refresh_token),
         }
 
 
@@ -66,4 +71,7 @@ def load_settings() -> Settings:
         pg_port=os.environ.get("POSTGRES_PORT", "5432"),
         bot_token=_require("TELEGRAM_BOT_TOKEN"),
         chat_id=_require("TELEGRAM_CHAT_ID"),
+        youtube_client_id=os.environ.get("YOUTUBE_CLIENT_ID"),
+        youtube_client_secret=os.environ.get("YOUTUBE_CLIENT_SECRET"),
+        youtube_refresh_token=os.environ.get("YOUTUBE_REFRESH_TOKEN"),
     )

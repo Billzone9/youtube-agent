@@ -17,7 +17,17 @@ from .config import Settings, load_settings
 from .db import make_pool, wait_for_db
 from .migrations.runner import run_migrations
 from .notifier import TelegramNotifier, parse_approval_callback
+from .publish import DryRunPublisher
 from .seed import run_seed
+
+
+def _build_publisher(settings: Settings):
+    """YouTubePublisher when a refresh token is configured; else the dry-run publisher."""
+    if settings.youtube_refresh_token:
+        from .youtube import YouTubePublisher  # imported lazily (needs the google libs)
+
+        return YouTubePublisher(settings)
+    return DryRunPublisher()
 
 
 def _is_operator(update: Update, settings: Settings) -> bool:
@@ -41,16 +51,19 @@ async def submit_lion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     pool = context.application.bot_data["pool"]
     notifier = context.application.bot_data["notifier"]
+    publisher = context.application.bot_data["publisher"]
     async with pool.connection() as conn:
         channel = await repo.channels.get_by_slug(conn, "wildlife")
         if channel is None:
             await update.message.reply_text("No 'wildlife' channel found — seed has not run.")
             return
         res = await orchestrator.submit_video_for_approval(
-            conn, notifier, channel=channel, video_meta=lion_video_meta(), chat_id=settings.chat_id
+            conn, notifier, channel=channel, video_meta=lion_video_meta(),
+            chat_id=settings.chat_id, publish_mode=publisher.mode,
         )
     await update.message.reply_text(
-        f"Submitted job #{res['job']['id']} (video #{res['video']['id']}). Approval request sent."
+        f"Submitted job #{res['job']['id']} (video #{res['video']['id']}). "
+        f"Approval request sent ({publisher.mode})."
     )
 
 
@@ -66,9 +79,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     approval_id, decision = parsed
     pool = context.application.bot_data["pool"]
     notifier = context.application.bot_data["notifier"]
+    publisher = context.application.bot_data["publisher"]
     async with pool.connection() as conn:
         await orchestrator.handle_decision(
-            conn, notifier, approval_id=approval_id, decision=decision, decided_by="banks"
+            conn, notifier, publisher, approval_id=approval_id, decision=decision, decided_by="banks"
         )
 
 
@@ -97,7 +111,10 @@ def main() -> None:
         .post_shutdown(_post_shutdown)
         .build()
     )
-    app.bot_data.update(pool=pool, settings=settings, notifier=TelegramNotifier(app.bot))
+    app.bot_data.update(
+        pool=pool, settings=settings, notifier=TelegramNotifier(app.bot),
+        publisher=_build_publisher(settings),
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("submit_lion", submit_lion))
