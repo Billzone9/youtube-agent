@@ -40,10 +40,16 @@ _LION_OPENING = (
 # One graceful, accurate line — narration + score are AI; footage is licensed stock (doctrine §2).
 _LION_DISCLOSURE = "Narration and score are AI-assisted; all footage is licensed stock."
 
+# Balanced core + long-tail: a few strong terms a small channel still wants, weighted toward
+# specific, lower-competition phrases that match this calm, narrated, cinematic piece. High-
+# competition head terms ("animals", "africa", "wildlife") are dropped. No "4k" — the film is 1080p,
+# and an inaccurate resolution claim breaks the accuracy rule (doctrine §1).
 _LION_TAGS = (
-    "lion", "lion documentary", "wildlife documentary", "african savanna", "lions", "lion pride",
-    "nature documentary", "africa", "savanna", "big cats", "the hunt", "lion roar", "wildlife",
-    "animals",
+    "lion", "lion documentary", "lion pride", "african savanna",   # core
+    "lion documentary narrated", "lion documentary full", "relaxing wildlife documentary",
+    "calm nature documentary", "cinematic wildlife documentary", "narrated wildlife documentary",
+    "african wildlife documentary", "lions of the savanna", "lion hunt documentary",
+    "savanna wildlife",
 )
 
 _LION_TITLE = "Lion — Lord of the Savanna"
