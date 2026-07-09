@@ -11,11 +11,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from psycopg.types.json import Jsonb
+
 from . import repo
 from .budget import budget_status
 from .events import record_event
 
 if TYPE_CHECKING:  # avoid importing transports/impls at runtime
+    from .metadata.description import Description
     from .notifier import Notifier
     from .publish import Publisher, PublishResult
 
@@ -79,16 +82,25 @@ def _resolved_text(video: dict, result: "PublishResult", decided_by: str) -> str
 
 
 async def submit_video_for_approval(
-    conn, notifier: "Notifier", *, channel: dict, video_meta: dict, chat_id: str,
-    publish_mode: str = "dry_run",
+    conn, notifier: "Notifier", *, channel: dict, video_meta: dict, description: "Description",
+    chat_id: str, publish_mode: str = "dry_run", metadata_source: str = "manual",
 ) -> dict:
+    # Public text comes from the authored Description (title/description/tags); video_meta is the
+    # INTERNAL technical payload only. The two are joined here — the internal one never reaches a
+    # public field, and the authored text is recorded as video_metadata v1 for the audit/history.
+    pub = description.to_public_dict()
     async with conn.transaction():
         job = await repo.jobs.create(
             conn, channel_id=channel["id"], type="publish", status="awaiting_approval",
-            stage="publish", payload={"title": video_meta.get("title"), "publish_mode": publish_mode},
+            stage="publish", payload={"title": pub["title"], "publish_mode": publish_mode},
         )
         video = await repo.videos.create(
-            conn, channel_id=channel["id"], job_id=job["id"], status="awaiting_approval", **video_meta
+            conn, channel_id=channel["id"], job_id=job["id"], status="awaiting_approval",
+            title=pub["title"], description=pub["description"], tags=Jsonb(pub["tags"]), **video_meta,
+        )
+        meta = await repo.metadata.create_version(
+            conn, video_id=video["id"], channel_id=channel["id"], title=pub["title"],
+            description=pub["description"], tags=pub["tags"], source=metadata_source,
         )
         approval = await repo.approvals.create(
             conn, channel_id=channel["id"], job_id=job["id"], kind="publish", telegram_chat_id=chat_id
@@ -97,6 +109,12 @@ async def submit_video_for_approval(
             conn, "video_submitted", message=f"submitted '{video['title']}' for publish approval",
             channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
             data={"video_id": video["id"], "publish_mode": publish_mode},
+        )
+        await record_event(
+            conn, "metadata_version", message=f"stored authored metadata v{meta['version']}",
+            channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+            data={"video_id": video["id"], "metadata_id": meta["id"], "version": meta["version"],
+                  "source": metadata_source},
         )
 
     budget = await budget_status(conn)
@@ -187,6 +205,14 @@ async def handle_decision(
             privacy_status=result.privacy_status, published_at=result.published_at,
             status=result.video_status,
         )
+        # A real upload SETS the description at insert, so the authored version is now live — record
+        # that truthfully. (Dry-run applies nothing; the version stays authored-but-not-live.)
+        if result.mode == "live":
+            meta = await repo.metadata.get_latest_authored(conn, video["id"])
+            if meta is not None and meta.get("applied_at") is None:
+                await repo.metadata.mark_applied(
+                    conn, meta["id"], applied_at=result.published_at, applied_via="upload_insert"
+                )
         await repo.jobs.set_status(conn, job["id"], result.job_status, result=result.to_dict())
         ev_type = "published" if result.mode == "live" else "dry_run_published"
         ev_msg = ("published PRIVATELY to YouTube" if result.mode == "live"

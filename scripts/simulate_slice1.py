@@ -19,6 +19,8 @@ from psycopg.rows import dict_row
 from ytagent import orchestrator, repo
 from ytagent.artifacts import lion_video_meta
 from ytagent.config import load_settings
+from ytagent.metadata.guard import scan
+from ytagent.metadata.lion_reference import build_lion_reference
 from ytagent.migrations.runner import run_migrations
 from ytagent.notifier import StubNotifier
 from ytagent.publish import DryRunPublisher
@@ -59,9 +61,10 @@ async def run() -> None:
         print("[3] submit -> approve")
         notifier = StubNotifier()
         publisher = DryRunPublisher()
+        lion_desc = build_lion_reference()
         res = await orchestrator.submit_video_for_approval(
-            conn, notifier, channel=ch, video_meta=lion_video_meta(), chat_id=settings.chat_id,
-            publish_mode=publisher.mode,
+            conn, notifier, channel=ch, video_meta=lion_video_meta(), description=lion_desc,
+            chat_id=settings.chat_id, publish_mode=publisher.mode, metadata_source="layer1_manual",
         )
         job_id, video_id, appr_id = res["job"]["id"], res["video"]["id"], res["approval"]["id"]
         check("notifier received 1 approval request", len(notifier.requests) == 1)
@@ -80,6 +83,15 @@ async def run() -> None:
         check("job published_dryrun", job["status"] == "published_dryrun", job["status"])
         check("video published_dryrun", vid["status"] == "published_dryrun")
         body = dec["result"]["body"]
+        snip = body["snippet"]
+        check("public description is authored (clean, no artifacts)", not scan(snip["description"]),
+              "; ".join(scan(snip["description"])))
+        check("authored SEO tags shipped (not just channel defaults)",
+              "lion documentary" in snip["tags"], str(snip["tags"][:4]))
+        vmeta = await repo.metadata.list_versions(conn, video_id)
+        check("video_metadata v1 recorded", len(vmeta) >= 1 and vmeta[0]["version"] == 1)
+        check("dry-run leaves metadata not-yet-live (applied_at NULL)",
+              vmeta and vmeta[-1]["applied_at"] is None)
         check("dry-run privacy private", body["status"]["privacyStatus"] == "private")
         check("dry-run synthetic-media disclosed", body["status"]["containsSyntheticMedia"] is True)
         check("dry-run NOT made-for-kids", body["status"]["selfDeclaredMadeForKids"] is False)
@@ -104,8 +116,8 @@ async def run() -> None:
         # --- submit -> REJECT ---
         print("[4] submit -> reject")
         res2 = await orchestrator.submit_video_for_approval(
-            conn, notifier, channel=ch, video_meta=lion_video_meta(), chat_id=settings.chat_id,
-            publish_mode=publisher.mode,
+            conn, notifier, channel=ch, video_meta=lion_video_meta(), description=lion_desc,
+            chat_id=settings.chat_id, publish_mode=publisher.mode, metadata_source="layer1_manual",
         )
         dec2 = await orchestrator.handle_decision(
             conn, notifier, publisher, approval_id=res2["approval"]["id"], decision="reject",

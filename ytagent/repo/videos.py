@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 _INSERT_COLS = (
-    "channel_id", "job_id", "title", "description", "file_path", "format",
+    "channel_id", "job_id", "title", "description", "tags", "file_path", "format",
     "duration_s", "width", "height", "fps", "loudness_lufs", "peak_dbfs",
     "noise_floor_db", "size_bytes", "checksum", "provenance_ref", "status",
 )

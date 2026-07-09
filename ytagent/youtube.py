@@ -15,6 +15,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from .config import Settings
+from .metadata.guard import assert_no_internal_artifacts
 from .publish import PRIVACY_LOCKED, PublishResult, build_youtube_body, validate_media
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
@@ -68,6 +69,10 @@ class YouTubePublisher:
         body = build_youtube_body(video, channel)
         if body["status"]["privacyStatus"] != PRIVACY_LOCKED:  # belt-and-braces private lock
             raise RuntimeError("privacyStatus not locked to private — refusing to upload")
+        # belt-and-braces artifact lock at the live boundary — re-scan the exact snippet we're about
+        # to send, so no other path can slip an internal artifact past the build-time guard.
+        snip = body["snippet"]
+        assert_no_internal_artifacts(snip["title"], snip["description"], *snip.get("tags", []))
 
         resource = await asyncio.to_thread(self._upload, creds, body, video["file_path"])
 

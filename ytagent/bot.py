@@ -14,6 +14,7 @@ from telegram.ext import (
 from . import orchestrator, repo
 from .artifacts import lion_video_meta
 from .config import Settings, load_settings
+from .metadata.lion_reference import build_lion_reference
 from .db import make_pool, wait_for_db
 from .migrations.runner import run_migrations
 from .notifier import TelegramNotifier, parse_approval_callback
@@ -59,7 +60,8 @@ async def submit_lion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         res = await orchestrator.submit_video_for_approval(
             conn, notifier, channel=channel, video_meta=lion_video_meta(),
-            chat_id=settings.chat_id, publish_mode=publisher.mode,
+            description=build_lion_reference(), chat_id=settings.chat_id,
+            publish_mode=publisher.mode, metadata_source="layer1_manual",
         )
     await update.message.reply_text(
         f"Submitted job #{res['job']['id']} (video #{res['video']['id']}). "

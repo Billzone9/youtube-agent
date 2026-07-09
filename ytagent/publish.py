@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
+from .metadata.guard import assert_no_internal_artifacts
+
 PRIVACY_LOCKED = "private"  # never unlisted/public — Banks flips to public himself, by hand
 
 
@@ -52,11 +54,20 @@ class Publisher(Protocol):
 def build_youtube_body(video: dict, channel: dict) -> dict:
     cfg = channel.get("config") or {}
     lang = video.get("primary_language") or cfg.get("primary_language") or "en"
+    title = (video["title"] or "")[:100]
+    description = video.get("description") or ""
+    # Prefer the video's AUTHORED (research-led) tags; fall back to the channel default set only when
+    # a video has none. Previously default_tags always won, so authored SEO tags never shipped.
+    tags = list(video.get("tags") or cfg.get("default_tags") or [])
+    # Publish chokepoint: no internal artifact may reach a public field. Belt-and-braces with the
+    # generator-side guard (mirrors the doubled PRIVACY_LOCKED assertion) — a build-time check alone
+    # is bypassable by any other path that sets snippet text.
+    assert_no_internal_artifacts(title, description, *tags)
     return {
         "snippet": {
-            "title": (video["title"] or "")[:100],
-            "description": video.get("description") or "",
-            "tags": cfg.get("default_tags") or [],
+            "title": title,
+            "description": description,
+            "tags": tags,
             "categoryId": str(cfg.get("youtube_category_id", "15")),  # 15 = Pets & Animals
             "defaultLanguage": lang,
             "defaultAudioLanguage": lang,
