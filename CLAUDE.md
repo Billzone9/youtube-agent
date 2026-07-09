@@ -195,6 +195,19 @@ without approval.**
   commit secrets or media (both gitignored).
 - **Two terminals, always tagged** `[ON THE SERVER]` / `[ON YOUR MAC]`; **no `#` comment lines in
   shell blocks**; **end command chains with** `&& echo "OK..." || echo "FAILED..."`.
+- **Public-facing output** (full standard: `public-facing-output-standard.md`; spec §15 — read the
+  doc in full before touching any metadata/description behaviour). Everything an audience sees —
+  descriptions, titles, tags, chapter labels, community posts, social captions — is viewer-first,
+  on-brand, and **never contains internal artifacts** (no filenames, repo paths, manifest references,
+  job/video IDs, QC numbers). Public text is authored; the internal provenance/audit record is logged
+  separately; they never mix. **Descriptions** are research-led (YouTube API signals + web/trend
+  research *before* writing), SEO-rich to attract viewers/subscribers, length chosen by research not
+  template, per-channel voice from onboarding config, with a single graceful AI-disclosure line at the
+  bottom. Descriptions/titles are **not fixed**: once public, the agent measures metadata performance
+  (impressions, CTR, views, subs gained, search terms) and adapts — but **only on real public data,
+  never fabricated** — built in two layers: research-led writing now (Layer 1), performance loop
+  activated across the analytics slices when public data exists (Layer 2). Build Layer 1's data model
+  to capture initial metadata + reserve the metric fields now, as with the cost/revenue ledgers.
 
 ## When you need Banks
 State plainly what you need and why; he gets a phone notification and will approve. Default to asking

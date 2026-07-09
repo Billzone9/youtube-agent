@@ -287,3 +287,23 @@ The progressive monthly ceiling (£200 → £350 → £500) is a single GLOBAL c
 combined, not per channel. The governor tracks spend per channel for ROI/ROAS reporting, but the
 hard ceiling it enforces is the global total. (Per-channel sub-limits may be added later as a
 dashboard control, but the enforced wall is global.)
+
+---
+
+## 15. Public-facing output & the metadata performance loop
+
+Full standard: `public-facing-output-standard.md` (canonical — read it in full). Core rule:
+everything an audience sees (descriptions, titles, tags, chapter labels, community posts, social
+captions) is viewer-first, on-brand, and contains **no internal engineering artifacts** — filenames,
+repo paths, manifest references, job/video IDs, and QC numbers never reach public text; the internal
+provenance/audit record and the public text are kept strictly separate (the fix for the lion-upload
+`…-footage-manifest.md` leak). Descriptions are research-led (YouTube Analytics/Data signals +
+web/trend research BEFORE writing) and SEO-driven to attract viewers and subscribers, length chosen
+by research not template, in a per-channel voice from onboarding config, with a single graceful
+one-line AI-disclosure at the bottom. Descriptions/titles are NOT fixed: once videos are public the
+agent measures metadata performance (impressions, CTR, views, subscribers gained, search terms) and
+adapts — but only on real public data, never fabricated. Built in two layers: research-led writing
+now (Layer 1), the performance loop activated across the analytics slices when public data exists
+(Layer 2), with Layer 1 laying the data fields now (as the cost/revenue ledgers were). Depends on the
+YouTube Analytics access (now unlocked) and competitor/trend analysis (§14.5). See the standard doc
+for the complete specification and the Layer-1 data obligations.
