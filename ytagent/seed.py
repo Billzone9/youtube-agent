@@ -34,6 +34,23 @@ WILDLIFE_CONFIG = {
     "format_mix": {"long_form": True, "shorts": False},
     "youtube_category_id": "15",     # Pets & Animals
     "default_tags": ["wildlife", "nature documentary", "lion", "africa", "savanna"],
+    # House-voice exemplars registered as DATA (few-shot references the writer is calibrated against;
+    # the lion is the wildlife instance, not hardcoded in code).
+    "style_exemplars": {"script": "lion-doc-01-script.md"},
+}
+
+# LLM prices (USD per 1M tokens) + FX, seeded ONCE into platform_settings (DO NOTHING on re-seed so
+# dashboard edits survive). cache_read ≈ 0.1× input; cache_write_5m ≈ 1.25× input. Editable, not code.
+LLM_PRICING = {
+    "anthropic": {
+        "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.30,
+                              "cache_write_5m": 3.75, "currency": "USD"},
+        "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0, "cache_read": 0.10,
+                                      "cache_write_5m": 1.25, "currency": "USD"},
+        "claude-opus-4-8": {"input": 15.0, "output": 75.0, "cache_read": 1.50,
+                            "cache_write_5m": 18.75, "currency": "USD"},
+    },
+    "fx": {"USD_GBP": 0.79, "as_of": "2026-07-13"},   # approximate; reconcilable, dashboard-editable
 }
 
 
@@ -92,6 +109,13 @@ def run_seed() -> None:
                 "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()",
                 [Jsonb({"tier": settings.budget_tier, "ceiling_gbp": settings.budget_ceiling_gbp,
                         "scope": "global"})],
+            )
+
+            # LLM pricing + FX (seed defaults ONCE; DO NOTHING so later dashboard edits persist)
+            conn.execute(
+                "INSERT INTO platform_settings (key, value) VALUES ('llm_pricing', %s) "
+                "ON CONFLICT (key) DO NOTHING",
+                [Jsonb(LLM_PRICING)],
             )
 
             # --- honest cost baseline ---

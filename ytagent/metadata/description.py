@@ -40,15 +40,22 @@ def assemble_description(
     *,
     title: str,
     opening: str,
-    chapters: list[Chapter],
     disclosure: str,
+    chapters: list[Chapter] | None = None,
     tags: tuple[str, ...] | list[str] = (),
 ) -> Description:
     """Deterministically build a guard-clean Description from authored parts.
 
-    Structure: opening → 'Chapters:' block → one blank line → the single disclosure line (bottom).
+    Structure: opening → (optional 'Chapters:' block) → the single disclosure line (bottom).
+    Chapters are OMITTED for a brand-new video that has no assembled cut yet — honest timestamps
+    don't exist until assembly, and we never fabricate them (doctrine §2: chapters *where the content
+    supports them*). A video with a real cut (e.g. the lion) passes its real chapters.
     """
-    body = f"{opening.strip()}\n\n{format_chapters(chapters)}\n\n{disclosure.strip()}"
+    parts = [opening.strip()]
+    if chapters:
+        parts.append(format_chapters(chapters))   # validates 0:00-first, monotonic, ≥3, ≥10s apart
+    parts.append(disclosure.strip())
+    body = "\n\n".join(parts)
     title = title.strip()
     tags = tuple(t.strip() for t in tags if t and t.strip())
     # Guard EVERY public surface: title, the whole description (opening + chapter labels + disclosure),

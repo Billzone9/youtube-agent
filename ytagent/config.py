@@ -38,6 +38,8 @@ class Settings:
     youtube_client_id: str | None = None
     youtube_client_secret: str | None = None
     youtube_refresh_token: str | None = None
+    # LLM provider (optional — no key ⇒ the writer degrades to NullWriter, never fabricates)
+    anthropic_api_key: str | None = None
     # Honest-baseline constants (the lion film's known costs; subscription/VPS supplied at seed time)
     lion_music_credits: int = 1500
     # Budget (global, month-1 tier) — seeded into platform_settings
@@ -59,6 +61,7 @@ class Settings:
             "bot_token_set": bool(self.bot_token),
             "chat_id_set": bool(self.chat_id),
             "youtube_configured": bool(self.youtube_refresh_token),
+            "anthropic_configured": bool(self.anthropic_api_key),
         }
 
 
@@ -74,4 +77,5 @@ def load_settings() -> Settings:
         youtube_client_id=os.environ.get("YOUTUBE_CLIENT_ID"),
         youtube_client_secret=os.environ.get("YOUTUBE_CLIENT_SECRET"),
         youtube_refresh_token=os.environ.get("YOUTUBE_REFRESH_TOKEN"),
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
     )
