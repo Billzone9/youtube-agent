@@ -191,8 +191,16 @@ without approval.**
   fact underneath. (Established with the lion film; adapt per channel.)
 - **Secrets:** never commit; they live in `.env` (gitignored). Load with python-dotenv; never print,
   echo, log, or commit a secret.
-- **Git:** commit locally freely; **do not push to the public remote without Banks's OK**; never
-  commit secrets or media (both gitignored).
+- **Git autonomy policy:** commit locally freely, as now. You may also **push and merge — but only on
+  Banks's explicit word**, which he gives as a phrase like "ship it" / "merge slice N". On that word,
+  run the full ritual yourself: (1) run the relevant verify/regression scripts and confirm green;
+  (2) push the feature branch; (3) verify the merge to `main` would be a clean fast-forward (**`git
+  merge --ff-only` only** — if it cannot fast-forward, **STOP** and show Banks the graph instead of
+  merging); (4) merge, push `main`, delete the spent branch local + remote; (5) report the before/after
+  commit hashes. **Never force-push anything, ever.** **Never push to `main` without the explicit
+  ship-word for that specific slice.** All git operations remain confined to this repository
+  (`~/youtube-agent/`) — never touch any other repo or global git config. Never commit secrets or media
+  (both gitignored).
 - **Two terminals, always tagged** `[ON THE SERVER]` / `[ON YOUR MAC]`; **no `#` comment lines in
   shell blocks**; **end command chains with** `&& echo "OK..." || echo "FAILED..."`.
 - **Public-facing output** (full standard: `public-facing-output-standard.md`; spec §15 — read the
