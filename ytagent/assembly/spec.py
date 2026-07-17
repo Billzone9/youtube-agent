@@ -23,6 +23,8 @@ class Target:
     vcodec: str = "libx264"
     acodec: str = "aac"
     abitrate_k: int = 192
+    asr: int = 48000    # audio sample rate — MUST be forced: loudnorm silently upsamples to 96k,
+    #                     which injects broadband high-freq hiss (see house rule in CLAUDE.md)
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,8 @@ class EditSpec:
 def _target(fmt: str, d: dict) -> Target:
     return Target(fmt=fmt, w=d["w"], h=d["h"], fps=d["fps"], lufs=d.get("lufs", -14.0),
                   tp_dbfs=d.get("tp_dbfs", -1.0), vcodec=d.get("vcodec", "libx264"),
-                  acodec=d.get("acodec", "aac"), abitrate_k=d.get("abitrate_k", 192))
+                  acodec=d.get("acodec", "aac"), abitrate_k=d.get("abitrate_k", 192),
+                  asr=d.get("asr", 48000))
 
 
 def _clip(d: dict) -> Clip:

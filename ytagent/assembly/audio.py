@@ -25,12 +25,13 @@ def rebuild_beat_audio(spec, beat, dst: str) -> str:
         # duck the music under the narration; narration is the sidechain key
         "[musraw][narr]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=300[mus];"
         "[narr][mus]amix=inputs=2:duration=first:normalize=0[mix];"
-        f"[mix]loudnorm=I={tgt.lufs}:TP={tgt.tp_dbfs}:LRA=11[aout]"
+        # resample back to the target rate after loudnorm (it upsamples to 96k → broadband hiss)
+        f"[mix]loudnorm=I={tgt.lufs}:TP={tgt.tp_dbfs}:LRA=11,aresample={tgt.asr}[aout]"
     )
     args = [
         "-i", narr,
         "-stream_loop", "-1", "-t", f"{ndur}", "-i", music,   # loop music to cover the narration
         "-filter_complex", fc, "-map", "[aout]",
-        "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k",
+        "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr),
     ]
     return ffmpeg.run(args, dst=dst)

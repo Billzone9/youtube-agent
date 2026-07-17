@@ -102,6 +102,29 @@ def main() -> None:
     hiss = qc.compare(dict(good, noise_floor_db=-12.0), ref)
     check("broadband hiss (high noise floor) fails", not hiss.ok)
 
+    print("[7] noise gates (calibrated to Banks's ear: reference PASSES, hissy render FAILS)")
+    # measured on-disk (see the diagnosis): scored (CLEAN) vs the old 96k assembled (HISSY)
+    scored = {"sample_rate": 48000, "hi8k_db": -33.8, "hi10k_db": -36.6, "hi16k_db": -47.0}
+    hissy = {"sample_rate": 96000, "hi8k_db": -33.5, "hi10k_db": -35.8, "hi16k_db": -42.7}
+    g_ref = qc.noise_gate(scored)
+    check("locked reference PASSES the output noise gate", g_ref.ok)
+    g_hiss = qc.noise_gate(hissy)
+    check("hissy 96k render FAILS the output noise gate", not g_hiss.ok,
+          "; ".join(n for n, ok, _ in g_hiss.checks if not ok))
+    # the two independent catches
+    only_sr = qc.noise_gate(dict(scored, sample_rate=96000))
+    check("wrong sample rate alone FAILS (loudnorm→96k catch)", not only_sr.ok)
+    only_hf = qc.noise_gate(dict(scored, hi16k_db=-40.0))
+    check("elevated >16kHz alone FAILS (broadband-hiss catch)", not only_hf.ok)
+    # input gate is looser + ignores sample rate (sources get resampled); a clean beat passes
+    clean_src = {"sample_rate": 48000, "hi8k_db": -32.3, "hi10k_db": -35.1, "hi16k_db": -45.6}
+    check("clean source beat PASSES the (looser) input gate",
+          qc.noise_gate(clean_src, qc.SOURCE_THRESHOLDS).ok)
+    check("input gate ignores sample rate (sources get resampled)",
+          qc.noise_gate(dict(clean_src, sample_rate=44100), qc.SOURCE_THRESHOLDS).ok)
+    gross = {"sample_rate": 48000, "hi8k_db": -20.0, "hi10k_db": -22.0, "hi16k_db": -30.0}
+    check("a grossly noisy source FAILS the input gate", not qc.noise_gate(gross, qc.SOURCE_THRESHOLDS).ok)
+
     print(f"\n{'ALL PASSED' if _failures == 0 else str(_failures) + ' CHECK(S) FAILED'}")
     sys.exit(1 if _failures else 0)
 

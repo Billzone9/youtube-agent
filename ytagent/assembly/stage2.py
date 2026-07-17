@@ -42,8 +42,9 @@ def join_prebaked(spec, dst: str) -> str:
         fc.append(f"{aprev}[a{i}]acrossfade=d={o}:c1=tri:c2=tri{albl}")
         vprev, aprev = vlbl, albl
         acc = off + durs[i]
-    # master the crossfaded audio to the target loudness (ebur128-honest measurement is done in QC)
-    fc.append(f"{aprev}loudnorm=I={tgt.lufs}:TP={tgt.tp_dbfs}:LRA=11[aout]")
+    # master the crossfaded audio to the target loudness, then RESAMPLE BACK to the target rate:
+    # loudnorm internally upsamples (emits 96k), which injects broadband high-freq hiss — force 48k.
+    fc.append(f"{aprev}loudnorm=I={tgt.lufs}:TP={tgt.tp_dbfs}:LRA=11,aresample={tgt.asr}[aout]")
 
     args: list[str] = []
     for p in paths:
@@ -53,6 +54,7 @@ def join_prebaked(spec, dst: str) -> str:
         "-map", vprev, "-map", "[aout]",
         "-c:v", tgt.vcodec, "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
         "-r", str(tgt.fps),
-        "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-movflags", "+faststart",
+        "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr),  # belt + braces vs 96k
+        "-movflags", "+faststart",
     ]
     return ffmpeg.run(args, dst=dst)

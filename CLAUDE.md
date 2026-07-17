@@ -166,8 +166,19 @@ baseline, not month-one profit.
   swells — use the `volume` filter with a sine expression. **Build to a temp file, then `mv`.** Verify
   outputs by exact byte-count before swapping.
 - **Loudness:** master toward about **−14 LUFS** (YouTube normalization).
-- **Mandatory noise check on EVERY render:** measure the noise floor; remove broadband hiss; report
-  the noise floor in QC numbers.
+- **NO AUDIBLE BROADBAND NOISE — EVER (permanent, structural, every production and channel).** No
+  video may render with audible hiss/white noise. Enforce it with two gates, calibrated to Banks's
+  ear (the locked reference PASSES, a hissy render FAILS — exactly how the AI-tell scanner was
+  calibrated to the lion prose): an **input gate** (QC every source clip/beat/audio for noise before
+  assembly; fail loudly on a dirty input) and an **output gate** (multi-band + quiet-gap noise
+  measurement with absolute thresholds). A render that fails the output gate is **HARD-failed: the
+  output is deleted, a failure ping is sent, and the noise numbers are reported every render** (never
+  silently kept). Whole-file averaging HIDES gap hiss — measure the high bands (≈>8k/>10k/>16k) and
+  the quiet floor, not just a full-length mean. Reference the numbers: clean ≈ >16kHz −47 dB @ 48 kHz;
+  the first hissy assembly was >16kHz −42.7 dB @ **96 kHz**. **Known trap:** the FFmpeg `loudnorm`
+  filter silently **upsamples to 96 kHz**, which injects broadband high-frequency hiss and starves the
+  AAC encoder — always `aresample` back to the target rate after loudnorm AND set `-ar` on the output.
+  (Implemented in `ytagent/assembly/qc.py`: `noise_report`/`noise_gate`/`check_source_clean`.)
 - **Verify, don't assume.** After producing audio/video, measure it (duration, resolution, audio
   present, peak < 0 dBFS, noise floor) and report the numbers — Banks reviews by playing the file.
 - **Build then deploy:** prove on the Mac, deploy artefacts to the VPS deliberately; heavy AI

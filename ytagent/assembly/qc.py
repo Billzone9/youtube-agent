@@ -127,6 +127,72 @@ def compare(measured: dict, reference: dict, tol: QCTolerance = QCTolerance()) -
     return QCResult(ok=all(c[1] for c in checks), checks=checks)
 
 
+def band_mean_db(path: str, hz: int) -> float | None:
+    """Mean level in the band above `hz` (highpass + volumedetect) — broadband hiss lives up here."""
+    proc = subprocess.run(
+        [ffmpeg.FFMPEG, "-hide_banner", "-i", path, "-af", f"highpass=f={hz},volumedetect",
+         "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", proc.stderr)
+    return float(m.group(1)) if m else None
+
+
+def noise_report(path: str) -> dict:
+    """Multi-band noise picture: audio sample rate + high-band mean energy at 8/10/16 kHz."""
+    p = ffmpeg.probe(path)
+    sr = 0
+    for s in p["streams"]:
+        if s.get("codec_type") == "audio":
+            sr = int(s.get("sample_rate") or 0)
+            break
+    return {
+        "sample_rate": sr,
+        "hi8k_db": band_mean_db(path, 8000),
+        "hi10k_db": band_mean_db(path, 10000),
+        "hi16k_db": band_mean_db(path, 16000),
+    }
+
+
+@dataclass(frozen=True)
+class NoiseThresholds:
+    """Calibrated to Banks's ear: the LOCKED reference passes, the hissy (96k) render fails.
+    Reference `_scored.mp4`: 48000 Hz, >16k −47.0 dB, >8k −33.8 dB.
+    Hissy `_assembled.mp4` (loudnorm→96k): 96000 Hz, >16k −42.7 dB."""
+
+    expected_sample_rate: int = 48000
+    hi16k_max_db: float = -45.0      # scored −47.0 PASS · hissy −42.7 FAIL (the resampling-hiss catch)
+    hi8k_max_db: float = -28.0       # loose broadband guard (clean ≈ −33.8; a gross hiss exceeds this)
+
+
+# Looser bands for raw SOURCES (they get resampled during assembly, so no output-rate check; only a
+# gross-hiss guard). A clean source beat measures ≈ −45.6 dB >16k; a grossly noisy one is far hotter.
+SOURCE_THRESHOLDS = NoiseThresholds(expected_sample_rate=0, hi16k_max_db=-38.0, hi8k_max_db=-24.0)
+
+
+def noise_gate(report: dict, tol: NoiseThresholds = NoiseThresholds()) -> QCResult:
+    """PASS/FAIL a file's noise picture. No render with audible broadband noise may ever be kept
+    (house rule, CLAUDE.md). `expected_sample_rate=0` skips the rate check (for raw sources)."""
+    checks: list[tuple[str, bool, str]] = []
+    if tol.expected_sample_rate:
+        sr = report.get("sample_rate")
+        checks.append(("sample_rate", sr == tol.expected_sample_rate,
+                       f"{sr} Hz (want {tol.expected_sample_rate}; loudnorm→96k = broadband hiss)"))
+    h16 = report.get("hi16k_db")
+    checks.append((">16kHz noise", h16 is not None and h16 <= tol.hi16k_max_db,
+                   f"{h16} dB (≤{tol.hi16k_max_db})"))
+    h8 = report.get("hi8k_db")
+    checks.append((">8kHz noise", h8 is not None and h8 <= tol.hi8k_max_db,
+                   f"{h8} dB (≤{tol.hi8k_max_db})"))
+    return QCResult(ok=all(c[1] for c in checks), checks=checks)
+
+
+def check_source_clean(path: str, tol: NoiseThresholds = SOURCE_THRESHOLDS) -> QCResult:
+    """The INPUT gate — QC a source clip/beat/audio for gross noise before assembly, so a dirty input
+    never enters (and silently degrades) a production. Looser than the output gate; no rate check."""
+    return noise_gate(noise_report(path), tol)
+
+
 def vmaf(candidate: str, reference: str, *, seconds: float | None = None) -> float | None:
     """Objective similarity of `candidate` vs `reference` via libvmaf. None if it can't run.
     `seconds` limits both inputs to a leading window (a fast spot-check — full-length VMAF on a

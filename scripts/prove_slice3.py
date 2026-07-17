@@ -88,6 +88,15 @@ async def run() -> None:
         for name, ok, detail in result.comparison.checks:
             print(f"  {'✅' if ok else '❌'} {name}: {detail}")
         print(f"  → QC {'PASS' if result.comparison.ok else 'FAIL'}")
+        _rule()
+        print("NOISE gate (multi-band; no audible broadband noise, ever):")
+        print(f"  bands: sr={result.noise.get('sample_rate')}Hz  "
+              f">8k={result.noise.get('hi8k_db')}  >10k={result.noise.get('hi10k_db')}  "
+              f">16k={result.noise.get('hi16k_db')} dB")
+        for name, ok, detail in result.noise_gate.checks:
+            print(f"  {'✅' if ok else '❌'} {name}: {detail}")
+        print(f"  → NOISE {'PASS ✅ (audio clean)' if result.noise_gate.ok else 'FAIL ❌'}")
+        _rule()
         vscore = qc.vmaf(_ASSEMBLED, _SCORED, seconds=15)
         print(f"  VMAF vs _scored.mp4 (15s spot-check, SUPPLEMENTARY): {vscore}")
         print("  (same beats/content, but re-encoded + re-crossfaded, so not frame-aligned to the "

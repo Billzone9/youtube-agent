@@ -238,8 +238,9 @@ _QC_COLS = ("file_path", "format", "duration_s", "width", "height", "fps", "loud
             "peak_dbfs", "noise_floor_db", "size_bytes", "checksum", "provenance_ref")
 
 
-def assembly_ping_text(label: str, *, ok: bool, render_s: float, qc: dict, comparison=None) -> str:
-    """One line for Telegram: result · render time · runtime · QC pass/fail."""
+def assembly_ping_text(label: str, *, ok: bool, render_s: float, qc: dict, comparison=None,
+                       noise_ok: bool | None = None) -> str:
+    """One line for Telegram: result · render time · runtime · QC pass/fail · audio-clean."""
     parts = [f"🎬 Assemble <b>{label}</b>: {'✅ done' if ok else '⚠️ FAILED'}"]
     if render_s:
         parts.append(f"render {render_s:.0f}s")
@@ -248,6 +249,8 @@ def assembly_ping_text(label: str, *, ok: bool, render_s: float, qc: dict, compa
         parts.append(f"{int(dur // 60)}:{int(dur % 60):02d}")
     if comparison is not None:
         parts.append(f"QC {'PASS ✅' if comparison.ok else 'FAIL ❌'}")
+    if noise_ok is not None:
+        parts.append("audio 🔇 clean" if noise_ok else "audio ⚠️ NOISE")
     return " · ".join(parts)
 
 
@@ -297,19 +300,22 @@ async def record_assembly(
             conn, channel_id=channel["id"], job_id=job["id"], status="draft", title=title,
             **{k: result.qc.get(k) for k in _QC_COLS},
         )
+        noise_ok = result.noise_gate.ok if result.noise_gate else None
         await repo.jobs.set_status(conn, job["id"], "assembled", result={
             "qc": result.qc, "video_id": video["id"], "render_s": result.duration_render_s,
             "comparison_ok": (result.comparison.ok if result.comparison else None),
-            "provenance": result.provenance,
+            "noise": result.noise, "noise_ok": noise_ok, "provenance": result.provenance,
         })
         await record_event(
             conn, "assembly_completed",
             message=f"assembled {label} ({result.qc.get('duration_s')}s, "
-                    f"QC {'pass' if (result.comparison and result.comparison.ok) else 'n/a'})",
-            channel_id=channel["id"], job_id=job["id"], data={"video_id": video["id"], "qc": result.qc},
+                    f"QC {'pass' if (result.comparison and result.comparison.ok) else 'n/a'}, "
+                    f"noise {'clean' if noise_ok else 'n/a'})",
+            channel_id=channel["id"], job_id=job["id"],
+            data={"video_id": video["id"], "qc": result.qc, "noise": result.noise},
         )
 
     await notifier.notify(chat_id=chat_id, text=assembly_ping_text(
         label, ok=result.ok, render_s=result.duration_render_s, qc=result.qc,
-        comparison=result.comparison))
+        comparison=result.comparison, noise_ok=noise_ok))
     return {"ok": True, "job_id": job["id"], "video_id": video["id"], "result": result}
