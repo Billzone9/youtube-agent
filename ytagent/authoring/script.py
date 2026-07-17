@@ -17,13 +17,20 @@ import re
 from dataclasses import dataclass, field
 
 from ..providers.base import LLMRequest, ModelTier
-from .style import STYLE_SPEC_VERSION, compose_style
+from .style import STYLE_SPEC_VERSION, bare_title, compose_style
 from .tells import TELLS_THRESHOLDS_VERSION, scan_tells
 
 _MAX_RETRIES = 2
 _WPM_TARGET = 130         # calm, unhurried narration — the house pace (see house-voice-standard.md)
 _WPM_MAX = 140            # enforced per-beat upper bound; faster than this reads hurried
+_RUNTIME_TOLERANCE = 1.15  # overall runtime may exceed target by up to this (else regenerate)
 _STAGE_DIR = re.compile(r"\*\([^)]*\)\*|\([^)]*\)")   # *(beat)* and bare (stage direction) — NOT spoken
+_BEAT_LABEL_PREFIX = re.compile(r"^\s*beat\s*\d+\s*[—:\-]\s*", re.I)   # a model-echoed "Beat N —" prefix
+
+
+def _clean_label(label: str) -> str:
+    """Strip a model-echoed 'Beat N —' prefix so labels don't render as 'Beat 1 — Beat 1 — …'."""
+    return _BEAT_LABEL_PREFIX.sub("", label or "").strip()
 
 
 def _spoken(vo: str) -> str:
@@ -43,6 +50,17 @@ def _pacing_violations(beats_raw: list[dict]) -> list[tuple[int, float, int, int
         if wpm > _WPM_MAX:
             bad.append((i, wpm, int(sec / 60 * _WPM_MAX), sec))
     return bad
+
+
+def _runtime_violation(beats_raw: list[dict], runtime_target_s: int) -> tuple[int, int] | None:
+    """Enforce the OVERALL runtime budget, not just per-beat pace: (total_seconds, total_spoken_words)
+    if the script overran the target (e.g. by adding an extra beat), else None."""
+    tot_s = sum(int(b.get("approx_seconds", 0) or 0) for b in beats_raw)
+    tot_w = sum(len(_spoken(b.get("vo", "")).split()) for b in beats_raw)
+    word_cap = int(runtime_target_s / 60 * _WPM_MAX)
+    if tot_s > runtime_target_s * _RUNTIME_TOLERANCE or tot_w > word_cap:
+        return (tot_s, tot_w)
+    return None
 
 
 @dataclass(frozen=True)
@@ -112,7 +130,13 @@ TASK: write a short FOOTAGE-LED documentary narration script for one video, in t
   {_WPM_TARGET}/60 ≈ 2.2 spoken words per second (e.g. a 40s beat ≈ 85–90 words, a 45s beat ≈ 95–100).
   Do not pad to fill time; let the *(beat)* pauses and the footage breathe. Stage directions like
   *(beat)* are not spoken and do not count toward the word budget.
-- Target runtime ~{runtime_s}s; total SPOKEN VO ~{words} words; aim for about {n_beats} beats.
+- RESPECT THE OVERALL RUNTIME BUDGET: about {n_beats} beats, ~{runtime_s}s total, ~{words} spoken
+  words in all. Do NOT overrun the target by adding extra beats or padding — the sum of approx_seconds
+  should land near {runtime_s}s, not beyond it.
+- TITLE stays bare: the work's name only. No appended taglines, subtitles, or SEO phrases after a "|"
+  or dash (e.g. NOT "… | A Cinematic Wildlife Documentary"). SEO belongs in the description and tags.
+- LABELS stay within the channel's poetic register — evocative, never blunt or clinical (e.g.
+  "Learning the hunt", never "Learning to kill").
 Return STRICT JSON only:
 {{"title": str,
   "beats": [{{"label": str, "shot_brief": str, "vo": str, "approx_seconds": int}}],
@@ -145,9 +169,9 @@ class ScriptWriter:
         )
         user = f"VIDEO SUBJECT: {topic}\n{research_line}"
 
-        # Regenerate on an AI-tell flag OR a pacing overrun (a hurried beat breaks the voice), same
-        # bounded-retry pattern for both.
-        data, tell_report, pacing = None, None, []
+        # Regenerate on an AI-tell flag, a per-beat pacing overrun, OR an overall-runtime overrun —
+        # all break the calm register; same bounded-retry pattern for each.
+        data, tell_report, pacing, runtime_bad = None, None, [], None
         for _ in range(_MAX_RETRIES + 1):
             resp = self._p.complete(LLMRequest(
                 tier=ModelTier.QUALITY, system=style.system_prefix(_rules(runtime_target_s, words, n_beats)),
@@ -158,7 +182,8 @@ class ScriptWriter:
             beats_raw = data.get("beats", [])
             tell_report = scan_tells(" ".join(_spoken(b.get("vo", "")) for b in beats_raw))
             pacing = _pacing_violations(beats_raw)
-            if not tell_report.flagged and not pacing:
+            runtime_bad = _runtime_violation(beats_raw, runtime_target_s)
+            if not tell_report.flagged and not pacing and not runtime_bad:
                 break
             problems = []
             if tell_report.flagged:
@@ -168,12 +193,17 @@ class ScriptWriter:
                     f"too fast (keep ≤{_WPM_MAX} wpm) — " + "; ".join(
                         f"beat {i + 1} at {w:.0f} wpm, trim to ≤{bud} spoken words for its {sec}s"
                         for i, w, bud, sec in pacing))
+            if runtime_bad:
+                tot_s, tot_w = runtime_bad
+                problems.append(
+                    f"over the runtime budget — {tot_s}s / {tot_w} spoken words vs ~{runtime_target_s}s "
+                    f"/ ~{words} words target; REMOVE or shorten beats (do not add beats to fit words)")
             user += ("\nYour previous draft had problems: " + " | ".join(problems)
-                     + ". Rewrite: keep the calm pace and the deliberate *(beat)* pauses, and SHORTEN "
-                       "over-long beats rather than speeding up.")
+                     + ". Rewrite: keep the calm pace and the deliberate *(beat)* pauses, SHORTEN "
+                       "over-long beats rather than speeding up, and stay within the runtime budget.")
 
         beats = tuple(
-            Beat(index=i + 1, label=b.get("label", ""), shot_brief=b.get("shot_brief", ""),
+            Beat(index=i + 1, label=_clean_label(b.get("label", "")), shot_brief=b.get("shot_brief", ""),
                  vo=b.get("vo", ""), approx_seconds=int(b.get("approx_seconds", 0) or 0))
             for i, b in enumerate(data.get("beats", []))
         )
@@ -187,9 +217,10 @@ class ScriptWriter:
             "tells_thresholds_version": TELLS_THRESHOLDS_VERSION,
             "tells_flagged": tell_report.flagged if tell_report else None,
             "wpm_target": _WPM_TARGET, "wpm_max": _WPM_MAX, "pacing_ok": not pacing,
+            "runtime_ok": not runtime_bad,
             "research_available": bool(available),
         }
         return Script(
-            title=data.get("title", topic), runtime_target_s=runtime_target_s, word_target=words,
-            beats=beats, facts_used=facts, provenance=provenance,
+            title=bare_title(data.get("title", topic)), runtime_target_s=runtime_target_s,
+            word_target=words, beats=beats, facts_used=facts, provenance=provenance,
         )

@@ -7,11 +7,21 @@ it enters only as a `VoiceBrief` (config) + registered exemplar text (data). See
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from ..providers.base import CacheableBlock
 
 STYLE_SPEC_VERSION = 1
+
+# A trailing pipe-tagline on a title (SEO belongs in the description/tags, never the title).
+_TITLE_TAGLINE = re.compile(r"\s*[|｜].*$")
+
+
+def bare_title(title: str) -> str:
+    """Strip an appended pipe-tagline (e.g. 'Name | A Cinematic Documentary'). Never touches an
+    em-dash — that is legitimate title punctuation (e.g. 'Lion — Lord of the Savanna')."""
+    return _TITLE_TAGLINE.sub("", title or "").strip()
 
 # §1 — the positive register (channel-general craft; the *voice* comes from the per-channel brief).
 POSITIVE_REGISTER = """\

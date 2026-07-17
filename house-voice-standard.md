@@ -69,3 +69,14 @@ The style spec, the banned-tics list, and the scanner thresholds are versioned
 versions + model + params it was produced under. When the Layer-2 performance loop comes online it
 can correlate voice/prompt revisions against real audience response and tune the writer — the record
 is being kept now, as the ledgers were laid before their features.
+
+## §5 — Titles and chapter labels
+- **Titles stay bare.** A title is the work's name only — no appended taglines, subtitles, or SEO
+  phrases (e.g. *not* "Lion — Lord of the Savanna **| A Cinematic Wildlife Documentary**"). Search
+  keywords live in the description and tags, where they belong; a bare title reads with more authority
+  and doesn't look machine-optimised. (An em-dash *within* the name — "Lion — Lord of the Savanna" —
+  is legitimate title punctuation; only appended `|`/dash taglines are stripped.)
+- **Chapter labels stay in the poetic register.** Audience-facing navigation, evocative and in the
+  channel's voice — never blunt or clinical. "Learning the hunt", never "Learning to kill"; "The
+  weight of rest", not "Sleeping". Both are enforced in the writers (`bare_title`, and the register
+  instruction in the label/prose prompts).

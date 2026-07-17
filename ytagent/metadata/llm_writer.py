@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-from ..authoring.style import STYLE_SPEC_VERSION, compose_style
+from ..authoring.style import STYLE_SPEC_VERSION, bare_title, compose_style
 from ..authoring.tells import TELLS_THRESHOLDS_VERSION, scan_tells
 from ..providers.base import LLMRequest, ModelTier
 from .chapters import Chapter
@@ -29,6 +29,8 @@ TASK: write the public YouTube DESCRIPTION prose for one video, to the channel's
 - Open with a keyword-aware first sentence that puts the primary subject in the first ~40 characters
   and earns the click; then one or two engaging paragraphs. Weave keywords naturally — never stuff.
 - Length is your judgement for the niche and topic — not a fixed template; typically ~120–220 words.
+- TITLE stays bare: the work's name only. No appended taglines, subtitles, or SEO phrases after a "|"
+  or dash (e.g. NOT "… | A Cinematic Wildlife Documentary"). SEO lives in the description and tags.
 - End with a SINGLE, graceful one-line disclosure appropriate to an AI-assisted documentary whose
   footage is licensed stock (e.g. "Narration and score are AI-assisted; all footage is licensed stock.").
 - NEVER include internal artifacts: filenames, paths, manifest/provenance references, IDs, QC numbers.
@@ -43,8 +45,10 @@ TASK: propose YouTube SEO TAGS for this video. Return STRICT JSON: {"tags": [str
 
 _LABELS_RULES = """\
 TASK: author one short, evocative CHAPTER LABEL per timestamp for this video (in order). Labels are
-audience-facing navigation — no internal beat numbers, no runtime hints. Return STRICT JSON:
-{"labels": [str, ...]} with exactly one label per provided timestamp, in order."""
+audience-facing navigation — no internal beat numbers, no runtime hints. Keep them within the
+channel's poetic register — evocative, never blunt or clinical (e.g. "Learning the hunt", never
+"Learning to kill"). Return STRICT JSON: {"labels": [str, ...]} with exactly one label per provided
+timestamp, in order."""
 
 
 def _extract_json(text: str) -> dict:
@@ -131,7 +135,7 @@ class LLMWriter:
             "research_available": bool(available),
         }
         return {
-            "title": prose.get("title", ""),
+            "title": bare_title(prose.get("title", "")),
             "opening": prose.get("opening", ""),
             "disclosure": prose.get("disclosure", ""),
             "chapters": chapters,

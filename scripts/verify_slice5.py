@@ -164,6 +164,39 @@ async def run() -> None:
             await conn.execute("DELETE FROM cost_ledger WHERE idempotency_key=%s",
                                ["llm:verify-slice5-costtest"])
             print("  (cleaned up the fake cost row)")
+
+        print("[5] Slice 5 close-out rules (offline, zero spend)")
+        from ytagent.authoring.script import _clean_label, _runtime_violation
+        from ytagent.authoring.style import bare_title
+
+        check("title tagline stripped (pipe)",
+              bare_title("Lion — Lord of the Savanna | A Cinematic Documentary")
+              == "Lion — Lord of the Savanna")
+        check("em-dash title preserved (not a tagline)",
+              bare_title("Lion — Lord of the Savanna") == "Lion — Lord of the Savanna")
+
+        def _tagline(req):
+            if req.purpose == "description":
+                return json.dumps({"title": "Wolves of the North | Epic 4K Wildlife",
+                                   "opening": "The grey wolf moves through the snow.",
+                                   "disclosure": "Narration is AI-assisted; footage licensed."})
+            return json.dumps({"tags": ["grey wolf"]})
+
+        p2 = LLMWriter(FakeLLMProvider(_Sink(), _tagline)).write(
+            video=video, channel=channel, research=_Research())
+        check("LLMWriter emits a bare title (tagline stripped end-to-end)",
+              p2["title"] == "Wolves of the North", p2["title"])
+
+        check("beat label de-duplicated ('Beat 3 — X' → 'X')",
+              _clean_label("Beat 3 — The huddle") == "The huddle")
+        check("clean label unchanged when no prefix",
+              _clean_label("The huddle") == "The huddle")
+
+        short = [{"vo": "word " * 80, "approx_seconds": 45} for _ in range(3)]   # 135s, ~240 words
+        over = short + [{"vo": "word " * 80, "approx_seconds": 45}]              # 180s > 150×1.15
+        check("runtime within budget passes", _runtime_violation(short, 150) is None)
+        check("runtime overrun detected (extra beat, like penguin v1→v2)",
+              _runtime_violation(over, 150) is not None)
     finally:
         await conn.close()
 
