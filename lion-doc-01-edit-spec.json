@@ -1,0 +1,59 @@
+{
+  "id": "lion-doc-01",
+  "source": "beats",
+  "default_format": "16:9",
+  "targets": {
+    "16:9": {"w": 1920, "h": 1080, "fps": 24, "lufs": -14.0, "tp_dbfs": -1.0, "abitrate_k": 192},
+    "9:16": {"w": 1080, "h": 1920, "fps": 24, "lufs": -14.0, "tp_dbfs": -1.0, "abitrate_k": 192}
+  },
+  "beats": [
+    {
+      "name": "beat1",
+      "prebaked": "assets/lion-doc-01/output/beat1_v3.mp4",
+      "narration": "assets/lion-doc-01/narration/beat1.mp3",
+      "music": {"file": "assets/lion-doc-01/music/main_theme.mp3", "in_db": -16, "fade_in": 2, "fade_out": 3},
+      "out_transition": {"type": "xfade", "curve": "fade", "duration": 0.8},
+      "clips": [
+        {"src": "assets/lion-doc-01/clips/14301979_3840_2160_24fps.mp4", "trim_in": 0.0, "trim_out": 12.0,
+         "effect": {"type": "zoompan", "z_from": 1.0, "z_to": 1.08, "pan": "center"},
+         "focus": {"16:9": [0.5, 0.5], "9:16": [0.5, 0.5]}},
+        {"src": "assets/lion-doc-01/clips/11906941_3840_2160_24fps.mp4", "trim_in": 0.0, "trim_out": 10.0,
+         "effect": {"type": "zoompan", "z_from": 1.0, "z_to": 1.06, "pan": "center"},
+         "focus": {"16:9": [0.5, 0.5], "9:16": [0.5, 0.5]}},
+        {"src": "assets/lion-doc-01/clips/20316284-uhd_3840_2160_25fps.mp4", "trim_in": 0.0, "trim_out": 7.0,
+         "focus": {"16:9": [0.5, 0.5], "9:16": [0.5, 0.5]}},
+        {"src": "assets/lion-doc-01/clips/15452953_1920_1080_60fps.mp4", "trim_in": 8.0, "trim_out": 21.0,
+         "effect": {"type": "zoompan", "z_from": 1.0, "z_to": 1.05, "pan": "center"},
+         "focus": {"16:9": [0.5, 0.5], "9:16": [0.5, 0.5]}},
+        {"src": "assets/lion-doc-01/clips/13309521_1080_1920_30fps.mp4", "trim_in": 1.0, "trim_out": 12.0,
+         "focus": {"16:9": [0.5, 0.40], "9:16": [0.5, 0.5]}}
+      ]
+    },
+    {"name": "beat2", "prebaked": "assets/lion-doc-01/output/beat2.mp4", "narration": "assets/lion-doc-01/narration/beat2.mp3",
+     "music": {"file": "assets/lion-doc-01/music/main_theme.mp3", "in_db": -16},
+     "out_transition": {"type": "xfade", "curve": "fade", "duration": 0.8}},
+    {"name": "beat3", "prebaked": "assets/lion-doc-01/output/beat3.mp4", "narration": "assets/lion-doc-01/narration/beat3.mp3",
+     "music": {"file": "assets/lion-doc-01/music/main_theme.mp3", "in_db": -16},
+     "out_transition": {"type": "xfade", "curve": "fade", "duration": 0.8}},
+    {"name": "beat4", "prebaked": "assets/lion-doc-01/output/beat4_v2.mp4", "narration": "assets/lion-doc-01/narration/beat4.mp3",
+     "music": {"file": "assets/lion-doc-01/music/hunt.mp3", "in_db": -16},
+     "out_transition": {"type": "xfade", "curve": "fade", "duration": 0.8}},
+    {"name": "beat5", "prebaked": "assets/lion-doc-01/output/beat5.mp4", "narration": "assets/lion-doc-01/narration/beat5.mp3",
+     "music": {"file": "assets/lion-doc-01/music/main_theme.mp3", "in_db": -16},
+     "out_transition": {"type": "xfade", "curve": "fade", "duration": 0.8}},
+    {"name": "beat6", "prebaked": "assets/lion-doc-01/output/beat6_v2.mp4", "narration": "assets/lion-doc-01/narration/beat6.mp3",
+     "music": {"file": "assets/lion-doc-01/music/roar_swell.mp3", "in_db": -14},
+     "out_transition": {"type": "xfade", "curve": "fade", "duration": 0.8}},
+    {"name": "beat7", "prebaked": "assets/lion-doc-01/output/beat7.mp4", "narration": "assets/lion-doc-01/narration/beat7.mp3",
+     "music": {"file": "assets/lion-doc-01/music/main_theme.mp3", "in_db": -16}}
+  ],
+  "audio_mix": {
+    "narration_db": 0.0, "music_db": -16.0,
+    "duck": {"threshold": 0.05, "ratio": 8, "attack": 5, "release": 300},
+    "include_bed": false, "bed": "assets/lion-doc-01/ambient/savanna_bed.wav"
+  },
+  "sfx": [
+    {"file": "assets/lion-doc-01/sfx/roar_merged.wav", "beat": "beat6", "at_s": 20.0, "level_db": -6}
+  ],
+  "title_card": null
+}
