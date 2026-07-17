@@ -230,3 +230,86 @@ async def handle_decision(
         "handled": True, "decision": "approve", "job_id": job["id"],
         "video_id": video["id"], "result": result.to_dict(),
     }
+
+
+# --- Slice 3: assembly job + one-line completion ping (reuses the Notifier seam) --------------
+
+_QC_COLS = ("file_path", "format", "duration_s", "width", "height", "fps", "loudness_lufs",
+            "peak_dbfs", "noise_floor_db", "size_bytes", "checksum", "provenance_ref")
+
+
+def assembly_ping_text(label: str, *, ok: bool, render_s: float, qc: dict, comparison=None) -> str:
+    """One line for Telegram: result · render time · runtime · QC pass/fail."""
+    parts = [f"🎬 Assemble <b>{label}</b>: {'✅ done' if ok else '⚠️ FAILED'}"]
+    if render_s:
+        parts.append(f"render {render_s:.0f}s")
+    dur = (qc or {}).get("duration_s")
+    if dur:
+        parts.append(f"{int(dur // 60)}:{int(dur % 60):02d}")
+    if comparison is not None:
+        parts.append(f"QC {'PASS ✅' if comparison.ok else 'FAIL ❌'}")
+    return " · ".join(parts)
+
+
+async def record_assembly(
+    conn, notifier: "Notifier", *, channel: dict, spec_path: str, dst: str, chat_id: str,
+    fmt: str = "16:9", reference: dict | None = None, provenance_ref: str | None = None,
+    title: str | None = None,
+) -> dict:
+    """Run an assemble job: record it, render OUTSIDE any held txn (ffmpeg is multi-minute),
+    persist the artifact as a draft `videos` row from the measured QC, and ping Banks one line."""
+    import asyncio
+    import os
+
+    from .assembly import assembler
+
+    label = f"{channel['slug']}/{fmt}"
+    title = title or os.path.splitext(os.path.basename(spec_path))[0]
+
+    # Phase 1: record the job (txn)
+    async with conn.transaction():
+        job = await repo.jobs.create(
+            conn, channel_id=channel["id"], type="assemble", status="assembling", stage="assemble",
+            payload={"spec": spec_path, "format": fmt, "dst": dst},
+        )
+        await record_event(conn, "assembly_started", message=f"assembling {label}",
+                           channel_id=channel["id"], job_id=job["id"],
+                           data={"spec": spec_path, "dst": dst, "format": fmt})
+
+    # Phase 2: the render — NO DB transaction held
+    try:
+        result = await asyncio.to_thread(
+            assembler.assemble, spec_path, fmt=fmt, dst=dst, reference=reference,
+            provenance_ref=provenance_ref,
+        )
+    except Exception as e:  # noqa: BLE001 — record + surface any render failure
+        async with conn.transaction():
+            await repo.jobs.set_status(conn, job["id"], "failed", error=str(e))
+            await record_event(conn, "assembly_failed", message=str(e),
+                               channel_id=channel["id"], job_id=job["id"])
+        await notifier.notify(chat_id=chat_id,
+                              text=f"🎬 Assemble <b>{label}</b>: ⚠️ FAILED\n<code>{e}</code>")
+        return {"ok": False, "job_id": job["id"], "error": str(e)}
+
+    # Phase 3: persist the artifact + close the job (txn)
+    async with conn.transaction():
+        video = await repo.videos.create(
+            conn, channel_id=channel["id"], job_id=job["id"], status="draft", title=title,
+            **{k: result.qc.get(k) for k in _QC_COLS},
+        )
+        await repo.jobs.set_status(conn, job["id"], "assembled", result={
+            "qc": result.qc, "video_id": video["id"], "render_s": result.duration_render_s,
+            "comparison_ok": (result.comparison.ok if result.comparison else None),
+            "provenance": result.provenance,
+        })
+        await record_event(
+            conn, "assembly_completed",
+            message=f"assembled {label} ({result.qc.get('duration_s')}s, "
+                    f"QC {'pass' if (result.comparison and result.comparison.ok) else 'n/a'})",
+            channel_id=channel["id"], job_id=job["id"], data={"video_id": video["id"], "qc": result.qc},
+        )
+
+    await notifier.notify(chat_id=chat_id, text=assembly_ping_text(
+        label, ok=result.ok, render_s=result.duration_render_s, qc=result.qc,
+        comparison=result.comparison))
+    return {"ok": True, "job_id": job["id"], "video_id": video["id"], "result": result}

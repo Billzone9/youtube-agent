@@ -47,13 +47,15 @@ def integrated_loudness(path: str) -> tuple[float | None, float | None]:
 
 
 def noise_floor_db(path: str) -> float | None:
-    """High-band (>8 kHz) max volume — the mandatory noise-floor check (broadband hiss shows here)."""
+    """High-band (>8 kHz) MEAN volume — the mandatory noise-floor check. Mean (not max): broadband
+    hiss raises the floor, whereas max just catches legitimate musical transients (cymbals, air).
+    The locked reference measures −33.8 dB here (the figure recorded in artifacts.py)."""
     proc = subprocess.run(
         [ffmpeg.FFMPEG, "-hide_banner", "-i", path, "-af", "highpass=f=8000,volumedetect",
          "-f", "null", "-"],
         capture_output=True, text=True,
     )
-    m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", proc.stderr)
+    m = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", proc.stderr)
     return float(m.group(1)) if m else None
 
 
@@ -125,12 +127,14 @@ def compare(measured: dict, reference: dict, tol: QCTolerance = QCTolerance()) -
     return QCResult(ok=all(c[1] for c in checks), checks=checks)
 
 
-def vmaf(candidate: str, reference: str) -> float | None:
+def vmaf(candidate: str, reference: str, *, seconds: float | None = None) -> float | None:
     """Objective similarity of `candidate` vs `reference` via libvmaf. None if it can't run.
-    (Distorted=candidate, reference=reference; both scaled to the reference frame size/rate.)"""
+    `seconds` limits both inputs to a leading window (a fast spot-check — full-length VMAF on a
+    6.5-min 1080p pair is minutes of decode)."""
+    limit = ["-t", str(seconds)] if seconds else []
     try:
         proc = subprocess.run(
-            [ffmpeg.FFMPEG, "-hide_banner", "-i", candidate, "-i", reference, "-lavfi",
+            [ffmpeg.FFMPEG, "-hide_banner", *limit, "-i", candidate, *limit, "-i", reference, "-lavfi",
              "[0:v]settb=AVTB,setpts=PTS-STARTPTS[d];[1:v]settb=AVTB,setpts=PTS-STARTPTS[r];"
              "[d][r]libvmaf", "-f", "null", "-"],
             capture_output=True, text=True, timeout=1800,

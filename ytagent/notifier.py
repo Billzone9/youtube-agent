@@ -18,6 +18,10 @@ class Notifier(Protocol):
         """Replace the request after a decision (affordances removed)."""
         ...
 
+    async def notify(self, *, chat_id: str, text: str) -> None:
+        """Send a plain one-line status message (no affordances) — e.g. a job-completion ping."""
+        ...
+
 
 def approval_callback_data(approval_id: int, decision: str) -> str:
     return f"appr:{approval_id}:{decision}"
@@ -64,6 +68,11 @@ class TelegramNotifier:
             disable_web_page_preview=True,
         )
 
+    async def notify(self, *, chat_id: str, text: str) -> None:
+        await self.bot.send_message(
+            chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
+        )
+
 
 class StubNotifier:
     """In-memory Notifier for the simulated test — records calls, invents message ids."""
@@ -71,6 +80,7 @@ class StubNotifier:
     def __init__(self) -> None:
         self.requests: list[dict] = []
         self.resolutions: list[dict] = []
+        self.notifications: list[dict] = []
         self._next_id = 1000
 
     async def send_approval_request(self, *, chat_id: str, text: str, approval_id: int) -> int:
@@ -82,3 +92,6 @@ class StubNotifier:
 
     async def update_resolved(self, *, chat_id: str, message_id: int, text: str) -> None:
         self.resolutions.append({"chat_id": chat_id, "message_id": message_id, "text": text})
+
+    async def notify(self, *, chat_id: str, text: str) -> None:
+        self.notifications.append({"chat_id": chat_id, "text": text})

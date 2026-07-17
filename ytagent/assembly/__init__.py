@@ -5,7 +5,11 @@ Pure builders + measurement import cleanly without rendering; the render modules
 """
 from __future__ import annotations
 
-from . import ffmpeg, provenance, qc
+from . import audio, ffmpeg, provenance, qc, stage1, stage2
+from .assembler import AssemblyResult, assemble
 from .spec import EditSpec, load_spec
 
-__all__ = ["load_spec", "EditSpec", "ffmpeg", "qc", "provenance"]
+__all__ = [
+    "load_spec", "EditSpec", "assemble", "AssemblyResult",
+    "ffmpeg", "qc", "provenance", "stage1", "stage2", "audio",
+]
