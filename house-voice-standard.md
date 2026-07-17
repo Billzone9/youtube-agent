@@ -20,6 +20,12 @@ the rhythm. Channel-general principles (the *voice* differs per channel; the *cr
   arise from meaning. They are tools of emphasis, not a template to fill.
 - **Restraint.** Silence and the plain sentence are instruments. Not every line needs ornament; the
   quiet line makes the vivid one land.
+- **Pace is part of the voice.** Calm and unhurried. Narration targets **~120–140 words per minute**;
+  each beat's word budget is derived from its running time at that rate and the writer stays within it
+  (regenerating an over-long beat, the same way it regenerates on an AI-tell flag). Deliberate
+  `*(beat)*` pauses are kept — they are the breath of the voice, not dead air. A hurried read breaks
+  the register even when every word is right: the first emperor-penguin draft ran **~160 wpm and read
+  hurried**, which is why pace is now enforced (corrected in penguin v2).
 - **Per-channel voice from config.** The channel's `VoiceBrief` (tone, purpose, narrator style) sets
   the register. The lion's reverent poetry is the *wildlife instance*, not the universal template — a
   kids' channel or a finance channel reads nothing like it, and the same code must produce that.

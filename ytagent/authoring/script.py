@@ -20,9 +20,29 @@ from ..providers.base import LLMRequest, ModelTier
 from .style import STYLE_SPEC_VERSION, compose_style
 from .tells import TELLS_THRESHOLDS_VERSION, scan_tells
 
-_MAX_TELL_RETRIES = 2
-_WORDS_PER_SECOND = 1.8   # calm narration with pauses/ambience (lion ≈ this, generous headroom)
-_STAGE_DIR = re.compile(r"\*\([^)]*\)\*|\([^)]*\)")   # *(beat)* and bare (stage direction)
+_MAX_RETRIES = 2
+_WPM_TARGET = 130         # calm, unhurried narration — the house pace (see house-voice-standard.md)
+_WPM_MAX = 140            # enforced per-beat upper bound; faster than this reads hurried
+_STAGE_DIR = re.compile(r"\*\([^)]*\)\*|\([^)]*\)")   # *(beat)* and bare (stage direction) — NOT spoken
+
+
+def _spoken(vo: str) -> str:
+    """The spoken words only — stage directions like *(beat)* removed (they don't count toward pace)."""
+    return re.sub(r"\s+", " ", _STAGE_DIR.sub("", vo)).strip()
+
+
+def _pacing_violations(beats_raw: list[dict]) -> list[tuple[int, float, int, int]]:
+    """Beats whose spoken VO exceeds the pace cap: (index, wpm, word_budget, approx_seconds)."""
+    bad: list[tuple[int, float, int, int]] = []
+    for i, b in enumerate(beats_raw):
+        sec = int(b.get("approx_seconds", 0) or 0)
+        if sec <= 0:
+            continue
+        spoken = len(_spoken(b.get("vo", "")).split())
+        wpm = spoken / (sec / 60)
+        if wpm > _WPM_MAX:
+            bad.append((i, wpm, int(sec / 60 * _WPM_MAX), sec))
+    return bad
 
 
 @dataclass(frozen=True)
@@ -39,6 +59,14 @@ class Beat:
     vo: str            # narration (may carry sparing stage directions like *(beat)*)
     approx_seconds: int
 
+    @property
+    def spoken_words(self) -> int:
+        return len(_spoken(self.vo).split())
+
+    @property
+    def wpm(self) -> float:
+        return self.spoken_words / (self.approx_seconds / 60) if self.approx_seconds else 0.0
+
 
 @dataclass(frozen=True)
 class Script:
@@ -51,16 +79,11 @@ class Script:
 
     @property
     def word_count(self) -> int:
-        return sum(len(b.vo.split()) for b in self.beats)
+        return sum(b.spoken_words for b in self.beats)
 
     def to_narration(self) -> dict[str, str]:
         """Clean spoken text per beat (stage directions stripped) — the generation-ready narration."""
-        out: dict[str, str] = {}
-        for b in self.beats:
-            clean = _STAGE_DIR.sub("", b.vo)
-            clean = re.sub(r"\s+", " ", clean).strip()
-            out[f"beat{b.index}"] = clean
-        return out
+        return {f"beat{b.index}": _spoken(b.vo) for b in self.beats}
 
 
 def _extract_json(text: str) -> dict:
@@ -84,7 +107,12 @@ TASK: write a short FOOTAGE-LED documentary narration script for one video, in t
 - Footage-led: write the VO to what each shot would show; keep beats fittable to real clips.
 - Fact underneath, poetry on top: every claim accurate; list facts_used with established=true/false so
   uncertain claims are flagged for approval — never fabricate a fact or invent a statistic.
-- Target runtime ~{runtime_s}s; total VO ~{words} words; aim for about {n_beats} beats.
+- PACE IS PART OF THE VOICE — calm and unhurried, ~{_WPM_TARGET} words per minute of narration, never
+  above {_WPM_MAX}. For each beat, keep the SPOKEN VO within its approx_seconds at that rate: about
+  {_WPM_TARGET}/60 ≈ 2.2 spoken words per second (e.g. a 40s beat ≈ 85–90 words, a 45s beat ≈ 95–100).
+  Do not pad to fill time; let the *(beat)* pauses and the footage breathe. Stage directions like
+  *(beat)* are not spoken and do not count toward the word budget.
+- Target runtime ~{runtime_s}s; total SPOKEN VO ~{words} words; aim for about {n_beats} beats.
 Return STRICT JSON only:
 {{"title": str,
   "beats": [{{"label": str, "shot_brief": str, "vo": str, "approx_seconds": int}}],
@@ -108,7 +136,7 @@ class ScriptWriter:
         brief = build_voice_brief(channel)
         exemplars = [("house narration script", self._exemplar)] if self._exemplar else []
         style = compose_style(brief, exemplars)
-        words = int(runtime_target_s * _WORDS_PER_SECOND)
+        words = int(runtime_target_s / 60 * _WPM_TARGET)
         available = getattr(research, "available", False)
         research_line = (
             "Research signals: none available — write from established niche knowledge; do NOT claim "
@@ -117,20 +145,32 @@ class ScriptWriter:
         )
         user = f"VIDEO SUBJECT: {topic}\n{research_line}"
 
-        data, tell_report = None, None
-        for _ in range(_MAX_TELL_RETRIES + 1):
+        # Regenerate on an AI-tell flag OR a pacing overrun (a hurried beat breaks the voice), same
+        # bounded-retry pattern for both.
+        data, tell_report, pacing = None, None, []
+        for _ in range(_MAX_RETRIES + 1):
             resp = self._p.complete(LLMRequest(
                 tier=ModelTier.QUALITY, system=style.system_prefix(_rules(runtime_target_s, words, n_beats)),
                 messages=({"role": "user", "content": user},), max_tokens=2000, purpose="script",
                 channel_id=channel.get("id"),
             ))
             data = _extract_json(resp.text)
-            all_vo = " ".join(b.get("vo", "") for b in data.get("beats", []))
-            tell_report = scan_tells(all_vo)
-            if not tell_report.flagged:
+            beats_raw = data.get("beats", [])
+            tell_report = scan_tells(" ".join(_spoken(b.get("vo", "")) for b in beats_raw))
+            pacing = _pacing_violations(beats_raw)
+            if not tell_report.flagged and not pacing:
                 break
-            user += ("\nYour previous draft tripped the AI-tell scanner: "
-                     + "; ".join(tell_report.reasons) + ". Rewrite avoiding these.")
+            problems = []
+            if tell_report.flagged:
+                problems.append("AI tells — " + "; ".join(tell_report.reasons))
+            if pacing:
+                problems.append(
+                    f"too fast (keep ≤{_WPM_MAX} wpm) — " + "; ".join(
+                        f"beat {i + 1} at {w:.0f} wpm, trim to ≤{bud} spoken words for its {sec}s"
+                        for i, w, bud, sec in pacing))
+            user += ("\nYour previous draft had problems: " + " | ".join(problems)
+                     + ". Rewrite: keep the calm pace and the deliberate *(beat)* pauses, and SHORTEN "
+                       "over-long beats rather than speeding up.")
 
         beats = tuple(
             Beat(index=i + 1, label=b.get("label", ""), shot_brief=b.get("shot_brief", ""),
@@ -146,6 +186,7 @@ class ScriptWriter:
             "style_spec_version": STYLE_SPEC_VERSION,
             "tells_thresholds_version": TELLS_THRESHOLDS_VERSION,
             "tells_flagged": tell_report.flagged if tell_report else None,
+            "wpm_target": _WPM_TARGET, "wpm_max": _WPM_MAX, "pacing_ok": not pacing,
             "research_available": bool(available),
         }
         return Script(

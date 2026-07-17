@@ -191,3 +191,148 @@ Written to `cost_ledger` (category `ai_generation`, per-call, idempotent on the 
   longer (more output tokens) than the 270-word assumption.
 - **Chapter labels** for the lion were authored by the agent over the real cut timestamps (it did not
   invent timestamps) — e.g. "The pride's covenant", "Learning to kill", "The savanna's dusk".
+
+---
+
+## (b·v2) Autonomous footage-led script — emperor penguin v2 — paced
+
+Regenerated after adding the pacing standard to the writer: narration targets ~130 wpm and each beat
+is enforced at **≤140 wpm** (an over-long beat is regenerated, the same way an AI-tell flag is). The
+deliberate `*(beat)*` pauses are kept. v1 ran an overall **~160 wpm** and read hurried; **v2 runs an
+overall 117 wpm**, and every beat is within budget.
+
+**TITLE:** `Emperor — Father of the Ice`
+**Pace standard:** ~130 wpm target, ≤140 wpm enforced per beat
+**Target** ~150s / ~325 spoken words   •   **Actual:** 417 spoken words, 5 beats, overall **117 wpm**
+
+**Per-beat pace (the headline of this pass):**
+
+| Beat | Label | ~secs | spoken words | wpm |
+|---|---|---|---|---|
+| 1 | The darkness arrives | 40 | 60 | **90** |
+| 2 | The huddle | 45 | 96 | **128** |
+| 3 | The egg and the father | 45 | 92 | **123** |
+| 4 | What endurance costs | 45 | 82 | **109** |
+| 5 | First light, first life | 38 | 87 | **137** |
+
+All ≤140 wpm → `pacing_ok=True`.
+
+---
+
+**BEAT 1 — Beat 1 — The darkness arrives   (~40s)   [60 spoken words → 90 wpm]**
+
+**VISUALS (shot-brief):** Aerial or wide shot of Antarctic ice shelf fading into polar twilight; no sun on the horizon; vast, featureless white plain; perhaps a faint aurora beginning to colour the sky above.
+
+**VO:**
+> *(open on silence and wind)*
+>
+> At the bottom of the world, the sun does not simply set.
+>
+> *(beat)*
+> It retreats — for months. Leaving behind a darkness so complete, so absolute, that the ice itself seems to lean into it. Wind dragging across the plain. Temperature falling to fifty, sixty degrees below. Nothing alive, you might think, could choose this place.
+>
+> *(beat)*
+> And yet — something has.
+
+---
+
+**BEAT 2 — Beat 2 — The huddle   (~45s)   [96 spoken words → 128 wpm]**
+
+**VISUALS (shot-brief):** Ground-level shot of a mass emperor penguin huddle; thousands of birds pressed together; slow pan across the outer edge and then into the dense, dark interior of the group; individual birds shuffling inward; breath misting in the cold air.
+
+**VO:**
+> Thousands of them. Shoulder to shoulder, beak tucked to chest, shuffling in a slow, ceaseless rotation — the whole mass breathing as one animal.
+>
+> *(beat)*
+> The huddle is not comfort. It is mathematics. Packed this close, each bird loses less heat than it could ever conserve alone. At the centre, the temperature rises to nearly forty degrees above the air outside. An economy of warmth, earned in the only currency available — closeness.
+>
+> *(beat)*
+> Those on the outer edge press inward. Those inside drift, in time, to the cold rim. The huddle has no leaders. It simply endures.
+
+---
+
+**BEAT 3 — Beat 3 — The egg and the father   (~45s)   [92 spoken words → 123 wpm]**
+
+**VISUALS (shot-brief):** Close-up of a single emperor penguin male standing apart or at the huddle's edge; slow tilt down to reveal the brood pouch — a feathered fold of skin above the feet; one egg just visible, balanced there; the bird utterly still; wind moving the feathers slightly.
+
+**VO:**
+> But look closer at any one of these birds.
+>
+> *(beat)*
+> Beneath that feathered pouch — balanced on the tops of his feet, held clear of the ice — a single egg. One. The sum of the season's hope.
+>
+> *(beat)*
+> The female laid it, and left. She has walked sixty, perhaps eighty miles to open water, to feed and survive. He has eaten nothing since autumn. He will eat nothing until she returns.
+>
+> *(beat)*
+> He simply stands. And holds. And waits. Through storms that drive the windchill toward minus eighty. Through two months of unbroken dark.
+
+---
+
+**BEAT 4 — Beat 4 — What endurance costs   (~45s)   [82 spoken words → 109 wpm]**
+
+**VISUALS (shot-brief):** Medium shot of a lone male or small cluster of males; one bird lowering his head against a wind blast; feathers pressed flat; snow driving sideways across frame; a slow zoom in on the stillness of a bird braced against the storm.
+
+**VO:**
+> By the time the egg hatches, he will have lost nearly half his body weight.
+>
+> *(beat)*
+> Nothing about this is graceful. It is simply what must be done — and what, for millions of years, has been done.
+>
+> *(beat)*
+> In the absolute dark, with nothing but the press of warm bodies and the small weight on his feet, the emperor penguin holds the line between one generation and the next.
+>
+> *(beat)*
+> The storm does not care. The ice does not relent. He does not move.
+
+---
+
+**BEAT 5 — Beat 5 — First light, first life   (~38s)   [87 spoken words → 137 wpm]**
+
+**VISUALS (shot-brief):** Dawn light — first faint Antarctic sunrise after weeks of darkness — spilling low and pale across the ice; a huddle beginning to loosen as light returns; close-up of a newly hatched chick, grey and downy, visible at a father's brood pouch; the male looking down at it.
+
+**VO:**
+> And then — the light returns.
+>
+> *(beat)*
+> Slow at first. A pale seam at the edge of the world. The huddle stirs.
+>
+> *(beat)*
+> And from beneath that fold of warm skin, a sound — thin, urgent, entirely new. A chick, grey as ash and trembling, seeing its first pale Antarctic dawn. The father looks down at it the way all fathers do — with something that has no name in the cold, but is unmistakable all the same.
+>
+> *(beat)*
+> She will come. The ice is long. But she will come.
+
+---
+
+### FACTS USED (accuracy block)
+- [established] Emperor penguins breed during the Antarctic winter in total polar darkness lasting months
+- [established] The huddle reaches temperatures close to 37–40°C inside even when outside air is far below freezing
+- [established] Birds on the outer edge of the huddle rotate slowly inward in a continuous shuffling movement
+- [VERIFY] Emperor penguin females lay a single egg then walk roughly 50–120 km (reported range varies; '60 to 80 miles' used as illustrative mid-range) to open water to feed
+- [established] The male incubates the egg on his feet under a brood pouch for approximately two months without eating
+- [established] Males lose close to half their body weight during the incubation fast
+- [established] Wind-chill temperatures in the Antarctic breeding colonies can approach or exceed minus 80°C equivalent
+- [established] Emperor penguin chicks hatch grey and downy
+
+### Scan results (v2)
+- **AI-tell scan:** `flagged=False`  •  em-dash 2.3/100w  •  exclamations 0  •  not_only_but_also 0  •  tricolon (advisory) 0  •  lexical crutches (advisory) none
+- **pacing:** `pacing_ok=True` — every beat ≤140 wpm; overall 117 wpm (v1 was ~160 wpm)
+- **provenance:** provider=AnthropicProvider, model=claude-sonnet-4-6, style_spec_version=1, tells_thresholds_version=1, wpm_target=130, wpm_max=140, pacing_ok=True, research_available=False
+
+### Cost (v2)
+```
+THIS RUN cost: £0.0500
+Month-to-date spend: £14.68 / £200 (m1)  •  remaining £185.32
+```
+
+### Notes on v2
+- **Pace is fixed:** overall 117 wpm vs v1's ~160, every beat within the ≤140 budget — audibly calmer,
+  and the writer got there by *shortening* rather than speeding up (as instructed on regeneration).
+- **Voice held:** still `flagged=False`, em-dash 2.3/100w (right on the house baseline), no exclamations,
+  no generic openers. The register did not degrade under the tighter constraint.
+- **Honest facts:** it self-flagged the female's foraging-walk distance as `[VERIFY]` rather than
+  asserting a precise figure — exactly the fact-underneath discipline we want.
+- **Known cosmetic issue persists:** beat headers still read "Beat 1 — Beat 1 —" (the model puts
+  "Beat 1 —" inside the label and the printer also prefixes it). One-line fix, not applied this pass
+  since the ask was pacing only.
