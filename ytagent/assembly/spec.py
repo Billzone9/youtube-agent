@@ -99,6 +99,8 @@ class EditSpec:
     audio_mix: AudioMix
     sfx: tuple[Sfx, ...] = ()
     title_card: TitleCard | None = None
+    fade_in: float = 0.0                 # master fade-from-black (video + audio), seconds
+    fade_out: float = 0.0                # master fade-to-black (video + audio), seconds
     assets_root: str = "."               # dir the JSON lives in; relative asset paths resolve here
     active_format: str = "16:9"
 
@@ -156,6 +158,8 @@ def load_spec(path: str) -> EditSpec:
                            bed=am.get("bed")),
         sfx=tuple(Sfx(**s) for s in d.get("sfx", [])),
         title_card=TitleCard(**tc) if tc else None,
+        fade_in=d.get("fade_in", 0.0),
+        fade_out=d.get("fade_out", 0.0),
         assets_root=os.path.dirname(os.path.abspath(path)),
         active_format=d.get("default_format", next(iter(targets))),
     )

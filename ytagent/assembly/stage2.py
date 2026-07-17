@@ -42,16 +42,36 @@ def join_prebaked(spec, dst: str) -> str:
         fc.append(f"{aprev}[a{i}]acrossfade=d={o}:c1=tri:c2=tri{albl}")
         vprev, aprev = vlbl, albl
         acc = off + durs[i]
+    total = acc   # final master duration (Σ beat durations − Σ overlaps)
+    fi, fo = spec.fade_in, spec.fade_out
+
+    # master opening/closing fades (video fade-from/to-black + matching audio afade), if set
+    if fi or fo:
+        vf = []
+        if fi:
+            vf.append(f"fade=t=in:st=0:d={fi}")
+        if fo:
+            vf.append(f"fade=t=out:st={max(total - fo, 0):.3f}:d={fo}")
+        fc.append(f"{vprev}{','.join(vf)}[vout]")
+        vlast = "[vout]"
+    else:
+        vlast = vprev
+
     # master the crossfaded audio to the target loudness, then RESAMPLE BACK to the target rate:
     # loudnorm internally upsamples (emits 96k), which injects broadband high-freq hiss — force 48k.
-    fc.append(f"{aprev}loudnorm=I={tgt.lufs}:TP={tgt.tp_dbfs}:LRA=11,aresample={tgt.asr}[aout]")
+    aparts = [f"loudnorm=I={tgt.lufs}:TP={tgt.tp_dbfs}:LRA=11", f"aresample={tgt.asr}"]
+    if fi:
+        aparts.append(f"afade=t=in:st=0:d={fi}")
+    if fo:
+        aparts.append(f"afade=t=out:st={max(total - fo, 0):.3f}:d={fo}")
+    fc.append(f"{aprev}{','.join(aparts)}[aout]")
 
     args: list[str] = []
     for p in paths:
         args += ["-i", p]
     args += [
         "-filter_complex", ";".join(fc),
-        "-map", vprev, "-map", "[aout]",
+        "-map", vlast, "-map", "[aout]",
         "-c:v", tgt.vcodec, "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
         "-r", str(tgt.fps),
         "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr),  # belt + braces vs 96k

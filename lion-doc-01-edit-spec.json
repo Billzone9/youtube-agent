@@ -55,5 +55,7 @@
   "sfx": [
     {"file": "assets/lion-doc-01/sfx/roar_merged.wav", "beat": "beat6", "at_s": 20.0, "level_db": -6}
   ],
+  "fade_in": 1.5,
+  "fade_out": 2.0,
   "title_card": null
 }
