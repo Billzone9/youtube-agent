@@ -183,6 +183,13 @@ baseline, not month-one profit.
   present, peak < 0 dBFS, noise floor) and report the numbers — Banks reviews by playing the file.
 - **Build then deploy:** prove on the Mac, deploy artefacts to the VPS deliberately; heavy AI
   generation runs on cloud APIs, not the 2-core VPS (spec §10).
+- **VISUAL DENSITY — multi-clip cutting is the house standard (structural, every production/channel).**
+  A beat's visuals must CUT between multiple distinct clips — a fresh shot every ~8–15s, **never one
+  clip stretched/looped past ~15s**, and **no clip reused within a video** (except a declared motif).
+  Rule: a beat of *L* seconds carries **≥⌈L/15⌉** distinct clips (min), **~L/10** (target). Calibrated
+  to the lion (17 clips/7 beats); full standard in `visual-density-standard.md`. Enforced by
+  `ytagent/assembly/density.py:assert_visual_density` (a HARD gate before every render — a too-sparse
+  or clip-reusing cut fails loud, no render) and by N-distinct-clip sourcing (`source_clips_for_brief`).
 
 ## Autonomous asset sourcing (human approval is the gate)
 When building videos automatically you MAY search claim-safe sources (Pixabay, Freesound CC0-only,

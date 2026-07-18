@@ -9,20 +9,21 @@ from __future__ import annotations
 
 from .base import Candidate, NoMatch, QueryPlan, SourcedAsset, SourcingError, StockProvider
 from .factory import get_stock_providers
-from .orchestrator import source_for_brief, source_shot_briefs
+from .orchestrator import source_clips_for_brief, source_for_brief, source_shot_briefs
 
 __all__ = [
-    "get_stock_providers", "source_for_brief", "source_shot_briefs", "to_clip",
-    "SourcedAsset", "NoMatch", "Candidate", "QueryPlan", "StockProvider", "SourcingError",
+    "get_stock_providers", "source_for_brief", "source_clips_for_brief", "source_shot_briefs",
+    "to_clip", "SourcedAsset", "NoMatch", "Candidate", "QueryPlan", "StockProvider", "SourcingError",
 ]
 
 
-def to_clip(asset: SourcedAsset, *, approx_seconds: int):
+def to_clip(asset: SourcedAsset, *, approx_seconds: int, cap: bool = True):
     """A sourced asset → an assembly EditSpec Clip (the downstream seam; orientation is gate-guaranteed
-    to match the target, so a centre focal point is safe)."""
+    to match the target, so a centre focal point is safe). `cap=True` trims to ~approx_seconds (single-
+    clip legacy); `cap=False` keeps the whole source so the multi-clip fitter owns each shot's slot."""
     from ..assembly.spec import Clip
 
     dur = asset.candidate.duration or approx_seconds
-    return Clip(src=asset.local_path, trim_in=0.0,
-                trim_out=min(float(dur), float(approx_seconds or dur)),
+    trim_out = min(float(dur), float(approx_seconds or dur)) if cap else None
+    return Clip(src=asset.local_path, trim_in=0.0, trim_out=trim_out,
                 effect=None, focus={"16:9": [0.5, 0.5], "9:16": [0.5, 0.5]})
