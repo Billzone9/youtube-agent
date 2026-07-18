@@ -45,29 +45,54 @@ def _keywords(brief: str) -> tuple[str, ...]:
     return tuple(phrases[:4]) or (("footage",) if not words else (words[0],))
 
 
-def _llm_queries(brief: str, llm) -> tuple[str, ...]:
-    """One CHEAP (Haiku) call: prose → JSON list of 2-4 concrete search phrases."""
+def _llm_plan(brief: str, llm) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """One CHEAP (Haiku) call: prose → (search phrases, SUBJECT terms). The subject is the single
+    thing the shot is ABOUT (e.g. 'emperor penguin', or 'antarctic ice' for a scene-setter) — the LLM
+    can tell the animal from the scenery where token-frequency can't. Returns ((),()) on failure."""
     from ..providers.base import CacheableBlock, LLMRequest, ModelTier
 
     system = (CacheableBlock(
-        "Extract 2-4 short STOCK-FOOTAGE search phrases (2-3 words each: concrete subjects/nouns, "
-        "no camera directions like 'wide'/'aerial'/'slow pan') from the shot description. "
-        'Return STRICT JSON only: a list of strings, e.g. ["emperor penguin","ice shelf"].'),)
+        "From the shot description, return STRICT JSON only: "
+        '{"queries": [2-4 short stock-footage search phrases, 2-3 words, concrete nouns, no camera '
+        'directions like "wide"/"aerial"/"slow pan"], "subject": "the single main visual subject in '
+        '1-2 words (the animal/thing the shot is OF; for a pure scenery shot, the place/feature)"}. '
+        'Example: {"queries":["emperor penguin","penguin huddle"],"subject":"penguin"}.'),)
     resp = llm.complete(LLMRequest(tier=ModelTier.CHEAP, system=system,
                                    messages=({"role": "user", "content": _STAGE_DIR.sub(" ", brief)},),
-                                   max_tokens=120, purpose="sourcing_query"))
+                                   max_tokens=150, purpose="sourcing_query"))
     s = resp.text.strip()
-    start, end = s.find("["), s.rfind("]")
+    start, end = s.find("{"), s.rfind("}")
     if start == -1 or end == -1:
-        return _keywords(brief)
+        return (), ()
     try:
-        qs = [str(x).strip() for x in json.loads(s[start:end + 1]) if str(x).strip()]
+        d = json.loads(s[start:end + 1])
+        queries = tuple(str(x).strip() for x in d.get("queries", []) if str(x).strip())
+        subject = tuple(w for w in _W.findall(str(d.get("subject", "")).lower()) if len(w) > 2)
+        return queries[:4], subject
     except Exception:  # noqa: BLE001 — malformed model output → deterministic fallback
-        return _keywords(brief)
-    return tuple(qs[:4]) or _keywords(brief)
+        return (), ()
+
+
+def _must_terms(queries: tuple[str, ...]) -> tuple[str, ...]:
+    """The recurring SUBJECT term(s) — a candidate must contain at least one. Tokens appearing in ≥2
+    queries (the common thread, e.g. 'penguin'); else the single most-frequent token."""
+    from collections import Counter
+    counts = Counter(t for q in queries for t in _W.findall(q.lower()) if len(t) > 2)
+    recurring = tuple(t for t, n in counts.items() if n >= 2)
+    if recurring:
+        return recurring
+    return (counts.most_common(1)[0][0],) if counts else ()
 
 
 def build_query_plan(brief: str, *, approx_seconds: int, target_fmt: str, llm=None) -> QueryPlan:
     orientation = _ORIENT.get(target_fmt, "landscape")
-    queries = _llm_queries(brief, llm) if llm is not None else _keywords(brief)
-    return QueryPlan(queries=queries, orientation=orientation, min_seconds=int(approx_seconds or 0))
+    subject: tuple[str, ...] = ()
+    if llm is not None:
+        queries, subject = _llm_plan(brief, llm)
+    else:
+        queries = ()
+    if not queries:                       # no LLM, or the call failed → deterministic fallback
+        queries = _keywords(brief)
+    must = subject or _must_terms(queries)   # prefer the LLM subject; else the recurring token
+    return QueryPlan(queries=queries, orientation=orientation, min_seconds=int(approx_seconds or 0),
+                     must_terms=must)

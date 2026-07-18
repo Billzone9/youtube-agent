@@ -56,6 +56,7 @@ class QueryPlan:
     queries: tuple[str, ...]    # 2-4 search phrases (the only fuzzy, LLM-assisted part)
     orientation: str            # from the target format — DETERMINISTIC
     min_seconds: int            # = beat.approx_seconds — DETERMINISTIC
+    must_terms: tuple[str, ...] = ()   # the recurring subject term(s) a candidate MUST contain
 
 
 @dataclass(frozen=True)

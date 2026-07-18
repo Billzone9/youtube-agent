@@ -10,7 +10,7 @@ import re
 
 from .base import Candidate, QueryPlan
 
-MATCH_THRESHOLD = 0.35
+MATCH_THRESHOLD = 0.50   # tightened after the penguin proof: reject weak keyword matches (fail loud)
 _W = re.compile(r"[a-z0-9]+")
 
 
@@ -24,6 +24,13 @@ def _tokens(*texts: str) -> set[str]:
 def score_candidate(c: Candidate, plan: QueryPlan, *, target_w: int, target_h: int) -> tuple[float, dict]:
     query_terms = _tokens(" ".join(plan.queries))
     haystack = _tokens(" ".join(c.tags), c.title, c.slug)   # tags + title + url-slug — NOT contributor
+
+    # Hard subject requirement: a candidate that lacks the recurring subject term is disqualified
+    # (this is what kills a "chicken" tagged with 'bird'/'chick' when the subject is 'penguin').
+    must = set(plan.must_terms)
+    if must and not (must & haystack):
+        return 0.0, {"disqualified": "missing subject term", "must_terms": sorted(must)}
+
     kw = (len(query_terms & haystack) / len(query_terms)) if query_terms else 0.0
 
     needed = max(3.0, min(float(plan.min_seconds), 15.0))   # clips get trimmed/held; enough for a slot

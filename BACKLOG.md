@@ -32,6 +32,17 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 - `[ ]` Decide public vs private repo (recommendation: public, secrets gitignored — lets Claude
   read it directly; private means re-pasting files each session).
 
+## Scheduler / playbook (Slice 6)
+- `[ ]` **Footage availability must inform topic selection.** Before committing to a topic, the
+  scheduler/playbook should PROBE library coverage — a cheap sourcing dry-run (search Pexels/Pixabay
+  for the topic's core subject, count gate-eligible matches) — and avoid or re-shape topics the stock
+  libraries can't dress. **Evidence (Slice 4 proof, 2026-07-18):** the emperor-penguin script sourced
+  only **1/5 shot-briefs** — free Pexels/Pixabay have almost no emperor-penguin-in-Antarctic-winter
+  footage, so 4/5 briefs failed loudly (correctly, not padded). Abundant subjects (lion, ocean,
+  generic wildlife) have deep coverage; niche species/biomes may not. Topic choice should be
+  coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
+  fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
+
 ## Phase 1 enablers (promote to ROADMAP when we start them)
 - `[ ]` Build asset-provenance logging into the production pipeline (URL + contributor + license
   + timestamp per clip). Required by the footage-recon findings.

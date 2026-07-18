@@ -118,6 +118,10 @@ async def run() -> None:
               next(s for s, c, _ in ranked if c.asset_id == "2") < ranked[0][0])
         check("off-topic falls below threshold",
               next(s for s, c, _ in ranked if c.asset_id == "3") < MATCH_THRESHOLD)
+        chicken = _cand("pixabay", "4", w=1920, h=1080, tags=["bird", "chick", "feather", "farm"], dl=clean)
+        r_ch = rank_candidates([chicken], p, target_w=1920, target_h=1080)
+        check("candidate MISSING the subject term is disqualified (the 'chicken' case)",
+              r_ch[0][0] == 0.0, f"must_terms={p.must_terms} score={r_ch[0][0]}")
 
         print("[3] the gate: SILENT clip passes, HISS rejected, wrong orientation rejected")
         gs = gate_download(clean, orientation="landscape")
