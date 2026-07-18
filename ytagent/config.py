@@ -40,6 +40,9 @@ class Settings:
     youtube_refresh_token: str | None = None
     # LLM provider (optional — no key ⇒ the writer degrades to NullWriter, never fabricates)
     anthropic_api_key: str | None = None
+    # Stock footage providers (optional — no key ⇒ that provider is dropped from the pool)
+    pexels_api_key: str | None = None
+    pixabay_api_key: str | None = None
     # Honest-baseline constants (the lion film's known costs; subscription/VPS supplied at seed time)
     lion_music_credits: int = 1500
     # Budget (global, month-1 tier) — seeded into platform_settings
@@ -62,6 +65,8 @@ class Settings:
             "chat_id_set": bool(self.chat_id),
             "youtube_configured": bool(self.youtube_refresh_token),
             "anthropic_configured": bool(self.anthropic_api_key),
+            "pexels_configured": bool(self.pexels_api_key),
+            "pixabay_configured": bool(self.pixabay_api_key),
         }
 
 
@@ -78,4 +83,6 @@ def load_settings() -> Settings:
         youtube_client_secret=os.environ.get("YOUTUBE_CLIENT_SECRET"),
         youtube_refresh_token=os.environ.get("YOUTUBE_REFRESH_TOKEN"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        pexels_api_key=os.environ.get("PEXELS_API_KEY"),
+        pixabay_api_key=os.environ.get("PIXABAY_API_KEY"),
     )
