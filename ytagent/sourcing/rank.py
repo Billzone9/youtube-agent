@@ -10,7 +10,10 @@ import re
 
 from .base import Candidate, QueryPlan
 
-MATCH_THRESHOLD = 0.50   # tightened after the penguin proof: reject weak keyword matches (fail loud)
+MATCH_THRESHOLD = 0.45   # the must-term SUBJECT filter is the real guard now; the score bar just
+#                          needs orientation + basic relevance (0.50 rejected genuine subject-correct
+#                          clips — a wolf beat near-missed at 0.49; 0.45 accepts it, still fails the
+#                          penguin's 0.44 beach clips). Subject correctness is enforced separately.
 _W = re.compile(r"[a-z0-9]+")
 
 

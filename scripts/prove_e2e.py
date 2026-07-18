@@ -70,7 +70,9 @@ async def run():
         print("=== PASS A — DRY RUN: full pipeline, real script+TTS spend, NO upload ===")
 
     script_writer = ScriptWriter(llm, exemplar_text=pathlib.Path("lion-doc-01-script.md").read_text())
-    notifier, bot = await _notifier(settings)
+    # Pass A (dry run) uses the STUB notifier on purpose: a real Telegram approval card, if clicked,
+    # would trigger the running bot's LIVE publisher = a real upload. Real Telegram only for Pass B.
+    notifier, bot = (await _notifier(settings)) if live else (StubNotifier(), None)
     conn = await psycopg.AsyncConnection.connect(settings.dsn(), row_factory=dict_row, autocommit=True)
     try:
         channel = await repo.channels.get_by_slug(conn, "wildlife")
