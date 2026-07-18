@@ -72,6 +72,28 @@ async def write_llm_cost(conn, rec, pricing: dict, *, reconciled: bool = True) -
     return {"row": row, "amount_gbp": calc["amount_gbp"], "amount_usd": calc["amount_usd"]}
 
 
+async def write_tts_cost(conn, *, channel_id: int, job_id: int | None, beat_name: str,
+                         characters: int, credits_est: float, amount_gbp_est, request_id: str | None,
+                         model: str, voice_id: str) -> dict:
+    """Log an ElevenLabs TTS narration cost as an ESTIMATE (reconciled=False). ElevenLabs bills
+    ASYNCHRONOUSLY (CLAUDE.md) — per-call reads settle against the live balance later — so a balance
+    reconciliation pass updates this row. Idempotent on tts:{job_id}:{beat_name}."""
+    meta = {"estimate": True, "characters": characters, "credits": credits_est,
+            "voice_id": voice_id, "request_id": request_id}
+    cur = await conn.execute(
+        "INSERT INTO cost_ledger (idempotency_key, channel_id, job_id, category, is_amortised, "
+        " provider, description, amount_gbp, currency, credits, period_month, reconciled, metadata) "
+        "VALUES (%(key)s,%(channel_id)s,%(job_id)s,'ai_generation',false,'ElevenLabs TTS',%(desc)s,"
+        " %(gbp)s,'GBP',%(credits)s,date_trunc('month',now())::date,false,%(meta)s) "
+        "ON CONFLICT (idempotency_key) DO UPDATE SET amount_gbp=EXCLUDED.amount_gbp, "
+        " credits=EXCLUDED.credits, metadata=EXCLUDED.metadata RETURNING *",
+        {"key": f"tts:{job_id}:{beat_name}", "channel_id": channel_id, "job_id": job_id,
+         "desc": f"TTS narration ({model}, {characters} chars)", "gbp": amount_gbp_est,
+         "credits": credits_est, "meta": Jsonb(meta)},
+    )
+    return await cur.fetchone()
+
+
 async def totals_gbp(conn) -> dict:
     """Lifetime totals for an honest net-position summary."""
     cur = await conn.execute("SELECT COALESCE(SUM(amount_gbp), 0) AS c FROM cost_ledger")

@@ -9,6 +9,24 @@ from __future__ import annotations
 from . import ffmpeg
 
 
+def build_beat_audio(spec, beat, dst: str) -> str:
+    """One beat's audio. Narration-only (no music) → the narration at 48 kHz stereo (the master
+    `join_prebaked` loudnorm does the −14 LUFS + aresample=48k). With music → the ducked mix via
+    `rebuild_beat_audio`. Duration = the narration length (authoritative for the beat)."""
+    if beat.music:
+        return rebuild_beat_audio(spec, beat, dst)
+    if not beat.narration:
+        raise ValueError(f"beat {beat.name!r} has no narration to build audio from")
+    tgt = spec.target
+    narr = spec.resolve(beat.narration)
+    args = [
+        "-i", narr,
+        "-af", "aformat=sample_rates=48000:channel_layouts=stereo",
+        "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr),
+    ]
+    return ffmpeg.run(args, dst=dst)
+
+
 def rebuild_beat_audio(spec, beat, dst: str) -> str:
     """narration + (ducked) music → one mastered audio file for a single beat."""
     if not beat.narration or not beat.music:

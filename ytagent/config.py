@@ -43,6 +43,8 @@ class Settings:
     # Stock footage providers (optional — no key ⇒ that provider is dropped from the pool)
     pexels_api_key: str | None = None
     pixabay_api_key: str | None = None
+    # TTS narration (optional — no key/scope ⇒ TTS unavailable; the key is Music+TTS scoped)
+    elevenlabs_api_key: str | None = None
     # Honest-baseline constants (the lion film's known costs; subscription/VPS supplied at seed time)
     lion_music_credits: int = 1500
     # Budget (global, month-1 tier) — seeded into platform_settings
@@ -67,6 +69,7 @@ class Settings:
             "anthropic_configured": bool(self.anthropic_api_key),
             "pexels_configured": bool(self.pexels_api_key),
             "pixabay_configured": bool(self.pixabay_api_key),
+            "elevenlabs_configured": bool(self.elevenlabs_api_key),
         }
 
 
@@ -85,4 +88,5 @@ def load_settings() -> Settings:
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
         pexels_api_key=os.environ.get("PEXELS_API_KEY"),
         pixabay_api_key=os.environ.get("PIXABAY_API_KEY"),
+        elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY"),
     )

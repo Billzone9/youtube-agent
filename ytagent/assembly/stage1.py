@@ -7,13 +7,53 @@ reproduction uses the pre-baked beats via stage2, not this.
 """
 from __future__ import annotations
 
+import math
+
 from . import ffmpeg
 from .spec import Clip
+
+_SLOW_MAX = 1.4   # stretch up to this ×; beyond it, loop (a big slow-down looks like slow-motion)
 
 
 def _clip_dur(clip: Clip, src_dur: float) -> float:
     end = clip.trim_out if clip.trim_out is not None else src_dur
     return max(round(end - clip.trim_in, 3), 0.1)
+
+
+def build_beat_fitted(spec, beat, dst: str, *, duration: float) -> str:
+    """Render ONE beat's (single) clip to fill EXACTLY `duration` seconds of silent, target-format
+    video — the narration length drives the beat. Long enough clip → trim; a little short → slow
+    (imperceptible on slow wildlife); much short → loop then trim the tail. Multi-clip beats fall back
+    to the trim-based `build_beat`."""
+    clips = beat.clips
+    if len(clips) != 1:
+        return build_beat(spec, beat, dst)
+    tgt = spec.target
+    clip = clips[0]
+    src = spec.resolve(clip.src)
+    p = ffmpeg.probe(src)
+    avail = _clip_dur(clip, p["duration"])
+    frames = int(duration * tgt.fps)
+    vf = ffmpeg.normalize_clip(p["width"], p["height"], tgt, clip.focus_for(tgt.fmt), clip.effect, frames)
+
+    if avail >= duration:                                   # trim
+        args = ["-ss", f"{clip.trim_in}", "-t", f"{duration:.3f}", "-i", src]
+        fc = f"[0:v]{vf}[vout]"
+    elif duration / avail <= _SLOW_MAX:                     # slow the clip to reach duration
+        factor = duration / avail
+        args = ["-ss", f"{clip.trim_in}", "-t", f"{avail:.3f}", "-i", src]
+        fc = f"[0:v]setpts={factor:.5f}*PTS,{vf}[vout]"
+    else:                                                   # loop (hard-cut seams) then trim
+        n = math.ceil(duration / avail)
+        args = ["-stream_loop", f"{n - 1}", "-t", f"{duration:.3f}", "-i", src]
+        fc = f"[0:v]{vf}[vout]"
+
+    args += [
+        "-filter_complex", fc, "-map", "[vout]", "-t", f"{duration:.3f}", "-an",
+        "-c:v", tgt.vcodec, "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-r", str(tgt.fps), "-movflags", "+faststart",
+    ]
+    return ffmpeg.run(args, dst=dst)
 
 
 def build_beat(spec, beat, dst: str, *, intra_xfade: float = 0.6) -> str:

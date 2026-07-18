@@ -10,7 +10,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from . import provenance, qc, stage1, stage2
+from . import audio, ffmpeg, provenance, qc, stage1, stage2
 from .spec import load_spec
 
 
@@ -32,14 +32,25 @@ class AssemblyResult:
 
 
 def _build_from_clips(spec, dst: str, workdir: str) -> str:
-    import os
+    """Build each beat as a real A/V clip — video FITTED to its narration length + narration audio,
+    muxed — then join via the proven stage-2 path (xfade + acrossfade + loudnorm + 48k). Narration is
+    the single source of beat duration; the master runtime = Σ narration − Σ crossfade overlaps."""
+    from dataclasses import replace as dc_replace
 
+    tag = spec.active_format.replace(":", "x")
     beat_paths = []
     for b in spec.beats:
-        bp = os.path.join(workdir, f"{spec.active_format.replace(':','x')}_{b.name}.mp4")
-        beat_paths.append(stage1.build_beat(spec, b, bp))
-    # replace prebaked with freshly-built beats, then join via the same stage-2 path
-    from dataclasses import replace as dc_replace
+        if not b.narration:
+            raise ValueError(f"beat {b.name!r}: clips path needs narration (its duration drives the beat)")
+        ndur = ffmpeg.probe(spec.resolve(b.narration))["duration"]
+        vid = os.path.join(workdir, f"{tag}_{b.name}_v.mp4")
+        aud = os.path.join(workdir, f"{tag}_{b.name}_a.m4a")
+        av = os.path.join(workdir, f"{tag}_{b.name}.mp4")
+        stage1.build_beat_fitted(spec, b, vid, duration=ndur)
+        audio.build_beat_audio(spec, b, aud)
+        ffmpeg.run(["-i", vid, "-i", aud, "-map", "0:v", "-map", "1:a",
+                    "-c:v", "copy", "-c:a", "copy", "-shortest", "-movflags", "+faststart"], dst=av)
+        beat_paths.append(av)
     rebuilt = dc_replace(spec, beats=tuple(dc_replace(b, prebaked=p)
                                            for b, p in zip(spec.beats, beat_paths)))
     return stage2.join_prebaked(rebuilt, dst)
@@ -64,7 +75,15 @@ def _input_gate(spec) -> None:
 def assemble(spec_path: str, *, fmt: str = "16:9", from_stage: str | None = None, dst: str,
              reference: dict | None = None, provenance_ref: str | None = None,
              workdir: str | None = None) -> AssemblyResult:
-    spec = load_spec(spec_path).for_format(fmt)
+    """Load an EditSpec JSON and assemble it (thin wrapper over the in-memory core)."""
+    return assemble_spec(load_spec(spec_path).for_format(fmt), dst=dst, from_stage=from_stage,
+                         reference=reference, provenance_ref=provenance_ref, workdir=workdir)
+
+
+def assemble_spec(spec, *, dst: str, from_stage: str | None = None, reference: dict | None = None,
+                  provenance_ref: str | None = None, workdir: str | None = None) -> AssemblyResult:
+    """Assemble an in-memory EditSpec (already format-resolved) → a mastered file at `dst`. The binder
+    produces such a spec directly, so there's no JSON round-trip. All gates apply."""
     stage = from_stage or spec.source
 
     if stage == "beats":

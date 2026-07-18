@@ -27,7 +27,8 @@ WILDLIFE_CONFIG = {
     "cadence": {"per_week": 1},
     "languages": ["en"],
     "primary_language": "en",
-    "voice_profile": {"provider": "elevenlabs", "name": "David", "style": "deep poetic British male"},
+    "voice_profile": {"provider": "elevenlabs", "name": "David", "style": "deep poetic British male",
+                      "voice_id": "jvcMcno3QtjOzGtfpjoI", "model": "eleven_multilingual_v2"},
     "monetisation": {"streams": ["adsense", "affiliate", "sponsorship", "product"]},
     "approval_policy": {"publish": "manual", "default_privacy": "private"},
     "enabled_social": [],            # YouTube-only until Banks enables platforms
