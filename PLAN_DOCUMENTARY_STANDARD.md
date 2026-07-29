@@ -8,6 +8,28 @@ no SFX, no breathers**. The lion film is the standard: layered score, ducking, a
 carries. **Acceptance bar: the re-made wolf must stand next to the lion.** One consolidated slice,
 reusing the preserved narration (£0 TTS).
 
+## APPROVED AMENDMENTS (2026-07-29 — these override anything below they touch)
+1. **BREATHERS ARE STRUCTURAL (primary acceptance criterion).** Sidechain release during inter-sentence
+   pauses is a gain-lift, NOT a breather, and will not clear the bar. The binder inserts **deliberate
+   music-only gaps in the timeline**: a **cold open** (3–5s of picture + score before the first word)
+   and a **3–5s music-only gap at each beat transition** (picture + score, no narration). Narration is
+   untouched (£0 TTS) — this is an EDIT-level change (extra picture/score time), not re-synthesis. See
+   revised §2e.
+2. **MEASURE FIRST.** `ffprobe` the actual per-beat narration + breather durations BEFORE choosing any
+   cue length; cue lengths follow the MEASURED timeline, not the plan's estimates (§2b/§2c numbers are
+   ceilings for budgeting only). The bed is generated **long enough to span the film** OR
+   **crossfade-looped so no seam is audible**. Noise-gate failure path is explicit: **one regeneration
+   with an adjusted prompt, then fail loud reporting credits spent.** The **bed degrades gracefully**
+   like SFX — a failed bed NEVER hard-fails the film (ship score+breathers without it, log the omission).
+3. **TWO-STAGE LIVE RUN.** **Stage 1** = curation + vision gate ONLY, **zero music spend**; report per
+   beat whether `n_min` content-verified clips were reached, with the verdicts, then **STOP** for Banks.
+   **Stage 2** = generate cues + bed, ONLY after Stage 1 is green and Banks says go.
+4. **BUDGET: hard ceiling 4,000 Music credits incl. retakes** (not the 2,250 estimate). Track cumulative
+   generated credits; on reaching 4,000 **hard-stop and report** (no further generation).
+
+**Build order (this session):** Part 1 (curation) + the offline verifications + the permanent
+fence/coyote/wild-wolf calibration fixtures FIRST. Commit locally, NO push until the ship-word.
+
 ---
 
 ## Part 1 — FOOTAGE CURATION (only wild, in-season, correct-species footage survives)
@@ -70,10 +92,14 @@ beat −14, matching the lion). The clips-path binder currently sets `music=None
 cue for each beat.
 
 **2c. Ambience bed (claim-safe, noise-gated).** Generate ONE soft continuous bed via ElevenLabs Music
-(`bed`, ~40s, ~600 cr — "very soft, dark, textural winter-forest wind ambience, no melody, no
-percussion, felt not heard"), looped under the whole film at a LOW fixed level (~−30 dB). Synthetic →
-claim-safe; **gated for noise** (the lion bed failed this — the gate is the guardrail). `EditSpec.
-audio_mix.include_bed=true` + `bed=<path>` (the fields already exist, unused in the clips path).
+(`bed` — "very soft, dark, textural winter-forest wind ambience, no melody, no percussion, felt not
+heard") at a LOW fixed level (~−30 dB). **Amendment 2:** generate the bed **long enough to span the
+measured film length** (so no repeat is needed) OR **crossfade-loop it (`acrossfade`) so no seam is
+audible** — never a hard-cut loop. Synthetic → claim-safe; **noise-gated on arrival**. **Noise-gate
+failure path (explicit):** one regeneration with an adjusted (softer/darker) prompt; if it fails again,
+**fail the bed gracefully** — ship score+breathers WITHOUT the bed and log the omission + credits spent.
+A failed bed NEVER hard-fails the film. `EditSpec.audio_mix.include_bed=true` + `bed=<path>` (fields
+already exist, unused in the clips path).
 
 **2d. The mix machinery (reuse Slice 3 ducking; add bed + SFX at master level).** Per-beat audio is
 already narration + ducked music (`assembly/audio.rebuild_beat_audio`, sidechaincompress) — used now
@@ -83,11 +109,22 @@ audio, `amix` the **bed** (looped to length, low) + **SFX** (`adelay` to each `S
 (`-c:v copy`). Runs only when a bed/SFX exist (the lion `join_prebaked` path stays untouched). The
 OUTPUT noise gate is the backstop (a hissy finish HARD-fails + is deleted).
 
-**2e. Breathers (music carries the scene).** No narration change (the VO is preserved). Breathers come
-free from the machinery: the narration's existing `*(beat)*` pauses drop below the sidechain threshold
-so the music **rises for the gap**, and the master `fade_in`/`fade_out` open and close on music+bed
-under a quiet frame. Add a short **music-led tail** (a ~2–3s bed/theme outro after the last word) via a
-small `fade_out` extension so the film doesn't end on a hard narration stop.
+**2e. Breathers — STRUCTURAL (Amendment 1; the primary acceptance criterion).** No narration change
+(the VO is preserved) — this is an EDIT-level change to the TIMELINE. The binder inserts deliberate
+music-only stretches where narration is ABSENT (not merely quieter):
+- **Cold open:** a 3–5s beat0 of picture + score before the first word (a sourced establishing shot; no
+  narration track on this beat → `build_beat_audio` renders score-only for it).
+- **Per-transition breather:** at each beat boundary, a 3–5s music-only gap — implemented by giving each
+  beat a short **trailing breather segment** (extra fitted picture time with NO narration under it) so
+  the beat's video runs `narration_len + breather`, and the beat's audio is narration for the first
+  part then score/bed alone for the breather. The narration mp3 is unchanged; the beat is simply LONGER
+  than its narration by the breather. Sidechain ducking still applies under the spoken part; the
+  breather is genuine silence-of-voice where score+bed carry the picture.
+- **Music-led tail:** a closing breather after the last word into the `fade_out`.
+Total added runtime ≈ cold-open + (n_beats−1)×breather + tail (~15–25s over the 157s VO) — this drives
+the MEASURED timeline the cue lengths follow (Amendment 2). `build_beat_audio`/`rebuild_beat_audio` gain
+a `breather_s` so a beat's audio = ducked narration+music for `narration_len`, then music(+bed) for the
+breather; `build_beat_fitted` already fills any target duration, so the extra picture time is free.
 
 **2f. SFX where the scene earns it (claim-safe).** The wolf earns ONE: a lone **howl** under beat4's
 "howl at the edge of dark" (place it in a narration gap so it reads, not clashes). Source claim-safe:
@@ -125,9 +162,11 @@ private upload only on Banks's word once it stands next to the lion.
 | `bed` (continuous) | ~40s | ~600 |
 | **Total music/ambience** | **~150s** | **~2,250 credits** |
 Plus SFX via sound-generation (if scope allows): ~1 short howl ≈ ~75–150 credits (else Freesound = 0).
-**≈ 2,250–2,400 credits (~15–16% of the 15,000 cap).** Marginal £ is subscription-covered (prepaid).
-Wolf total incl. the already-spent 1,804 TTS ≈ **~4,100 credits (~27% of cap)**. I will generate cues
-ONLY after Banks approves this estimate. Credits reconcile against the live balance afterward.
+**≈ 2,250–2,400 credits estimate; HARD CEILING 4,000 Music credits incl. retakes (Amendment 4)** —
+cumulative generated credits are tracked and generation HARD-STOPS + reports on reaching 4,000. Cue
+lengths follow the MEASURED timeline (Amendment 2), not this table (the table is a budgeting ceiling).
+Marginal £ is subscription-covered (prepaid). Generation happens ONLY in Stage 2 after Stage 1 is green
+and Banks says go. Credits reconcile against the live balance afterward.
 
 ## Files
 **New:** `ytagent/music/{__init__,base,elevenlabs}.py`; `ytagent/sourcing/vision.py`;
@@ -146,9 +185,12 @@ bed/sfx present), `repo/ledger.py` (`write_music_cost`), `metadata/llm_writer.py
   filter drops a `fence`-tagged candidate; `master_audio_finish` on a fake narration+cue+bed yields a
   master with audio, correct duration, **noise gate PASS (48kHz)**; disclosure reflects a
   no-music vs full-audio manifest correctly. All prior verifies (density, Slice 1/3/4/5, Layer1) green.
-- **Live re-make (gated):** Pass A prints per-beat clips + **the vision verdicts**, the cue list +
-  credits, the audio layers present, master QC + noise numbers, the accurate disclosure. Banks reviews
-  it against the lion.
+- **Live re-make (gated, TWO-STAGE per Amendment 3):** **Stage 1** — curation + vision gate only, ZERO
+  music spend: `ffprobe` the measured per-beat durations, source through the curation gates, print per
+  beat whether `n_min` content-verified clips were reached WITH the vision verdicts (species/wild/season
+  + reason). STOP and show Banks. **Stage 2** (only on Banks's go) — generate cues + bed (tracking
+  cumulative credits against the 4,000 hard ceiling; hard-stop + report if reached), build the full
+  audio, print the cue list + credits + audio layers + master QC + noise numbers + accurate disclosure.
 
 ## Expensive-to-retrofit (lock now)
 1. Vision gate INSIDE sourcing (content-verified clips), not a post-hoc check.
