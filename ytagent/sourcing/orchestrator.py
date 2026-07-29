@@ -132,7 +132,7 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                                  target_fmt: str, target_w: int, target_h: int, cache_dir: str,
                                  channel_id: int, job_id: int | None = None, llm=None,
                                  n_target: int, n_min: int, exclude_ids: set | None = None,
-                                 vision: bool = True,
+                                 vision: bool = True, collect_verdicts: list | None = None,
                                  ) -> list[SourcedAsset] | NoMatch:
     """Fill ONE beat with up to `n_target` DISTINCT clean, CONTENT-VERIFIED clips (visual-density
     standard). Walks the eligible list in rank order, skipping `exclude_ids` (video-wide no-repeat) and
@@ -169,8 +169,11 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                 frames = _vision.sample_frames(asset.local_path, vd)
                 v = _vision.vision_check(frames, expect=expect, llm=llm,
                                          channel_id=channel_id, job_id=job_id)
-            verdicts.append({"asset_id": cand.asset_id, "ok": v.overall_ok, "species": v.species_ok,
-                             "wild": v.wild_ok, "season": v.season_ok, "reason": v.reason})
+            rec = {"asset_id": cand.asset_id, "url": cand.page_url, "ok": v.overall_ok,
+                   "species": v.species_ok, "wild": v.wild_ok, "season": v.season_ok, "reason": v.reason}
+            verdicts.append(rec)
+            if collect_verdicts is not None:
+                collect_verdicts.append(rec)
             if not v.overall_ok:
                 await record_event(conn, "sourcing.vision_reject",
                                    message=f"{brief_ref} ✗ {cand.source}:{cand.asset_id} — "

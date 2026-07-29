@@ -81,6 +81,34 @@ async def _source_all_beats(conn, providers, script, *, channel_id, job_id, targ
     return sourced
 
 
+async def curate_report(conn, providers, script, *, channel_id, job_id=None, llm, target_fmt="16:9",
+                        target_w=1920, target_h=1080, cache_dir="assets/sourced", length_of) -> list[dict]:
+    """STAGE 1 (Amendment 3) — curation + vision gate ONLY, zero music spend. Sources each beat with the
+    vision gate and returns a per-beat report (verified count vs n_min, accepted ids, and every vision
+    verdict) WITHOUT assembling or raising. The no-repeat guard still holds across beats so the report
+    reflects a real full source-set. Callers print it and STOP for Banks."""
+    report, used = [], set()
+    for b in script.beats:
+        hint = length_of(b)
+        n_min = min_clips(hint)
+        n_tgt = max(target_clips(hint), n_min + 1)
+        verdicts: list = []
+        res = await source_clips_for_brief(
+            conn, providers, brief=b.shot_brief, brief_ref=f"{script.title[:24]}:beat{b.index}",
+            approx_seconds=int(hint), target_fmt=target_fmt, target_w=target_w, target_h=target_h,
+            cache_dir=cache_dir, channel_id=channel_id, job_id=job_id, llm=llm,
+            n_target=n_tgt, n_min=n_min, exclude_ids=used, vision=True, collect_verdicts=verdicts)
+        got = [] if isinstance(res, NoMatch) else res
+        used |= {(a.source, a.asset_id) for a in got}
+        report.append({"beat": b.index, "label": b.label, "narration_s": round(hint, 1),
+                       "n_min": n_min, "n_target": n_tgt, "verified": len(got),
+                       "reached_min": len(got) >= n_min,
+                       "accepted": [{"asset_id": a.asset_id, "url": a.candidate.page_url} for a in got],
+                       "verdicts": verdicts,
+                       "reason": res.reason if isinstance(res, NoMatch) else "ok"})
+    return report
+
+
 def _persist_production(slug: str, script, narration_paths: dict) -> str:
     """Persist the script + its narration mp3s under assets/produced/<slug>/ so a re-make or format
     variant reloads the exact words + audio with zero LLM/TTS re-spend."""
