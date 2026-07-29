@@ -15,6 +15,7 @@ from .base import Candidate, GateResult, NoMatch, SourcedAsset
 from .download import download
 from .gate import gate_download
 from .provenance import build_asset_provenance
+from . import vision as _vision
 from .query import build_query_plan
 from .rank import MATCH_THRESHOLD, rank_candidates
 
@@ -131,20 +132,25 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                                  target_fmt: str, target_w: int, target_h: int, cache_dir: str,
                                  channel_id: int, job_id: int | None = None, llm=None,
                                  n_target: int, n_min: int, exclude_ids: set | None = None,
+                                 vision: bool = True,
                                  ) -> list[SourcedAsset] | NoMatch:
-    """Fill ONE beat with up to `n_target` DISTINCT clean clips for the visual-density standard.
-    Walks the eligible list in rank order, skipping `exclude_ids` (video-wide no-repeat) and any id
-    already taken for this beat, acquiring each until `n_target` are held. Returns the list if at least
-    `n_min` distinct clips were obtained, else a `NoMatch` (a beat is NEVER padded with one stretched
-    clip). Bandwidth-bounded so a thin brief can't download endlessly."""
+    """Fill ONE beat with up to `n_target` DISTINCT clean, CONTENT-VERIFIED clips (visual-density
+    standard). Walks the eligible list in rank order, skipping `exclude_ids` (video-wide no-repeat) and
+    any id already taken; each acquired clip must also pass the VISION GATE (species/wild/season) when
+    `vision` and an `llm` are available. Returns the list if ≥ `n_min` verified clips were obtained,
+    else a `NoMatch` (a beat is NEVER padded with one stretched or off-brief clip)."""
+    import tempfile
+
     exclude = set(exclude_ids or ())
     plan = build_query_plan(brief, approx_seconds=approx_seconds, target_fmt=target_fmt, llm=llm)
+    expect = _vision.Expect.from_plan(plan)
     eligible, seen, considered, best = await _rank_eligible(
         conn, providers, plan, channel_id=channel_id, target_w=target_w, target_h=target_h)
 
     winners: list[SourcedAsset] = []
+    verdicts: list[dict] = []
     taken: set[tuple[str, str]] = set()
-    attempts, max_attempts = 0, n_target * 2 + 8
+    attempts, max_attempts = 0, n_target * 3 + 10           # vision rejects more, so allow more attempts
     for score, cand, _ in eligible:
         if len(winners) >= n_target or attempts >= max_attempts:
             break
@@ -156,20 +162,38 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
         asset = await _acquire(conn, channel_id=channel_id, job_id=job_id, cand=cand, score=score,
                                brief_ref=brief_ref, query_used=query_used, cache_dir=cache_dir,
                                orientation=plan.orientation)
-        if asset is not None:
-            winners.append(asset)
-            taken.add(key)
+        if asset is None:
+            continue
+        if vision and llm is not None:                       # CONTENT check — species / wild / season
+            with tempfile.TemporaryDirectory(prefix="vgate-") as vd:
+                frames = _vision.sample_frames(asset.local_path, vd)
+                v = _vision.vision_check(frames, expect=expect, llm=llm,
+                                         channel_id=channel_id, job_id=job_id)
+            verdicts.append({"asset_id": cand.asset_id, "ok": v.overall_ok, "species": v.species_ok,
+                             "wild": v.wild_ok, "season": v.season_ok, "reason": v.reason})
+            if not v.overall_ok:
+                await record_event(conn, "sourcing.vision_reject",
+                                   message=f"{brief_ref} ✗ {cand.source}:{cand.asset_id} — "
+                                           f"species={v.species_ok} wild={v.wild_ok} season={v.season_ok}: {v.reason}",
+                                   channel_id=channel_id, job_id=job_id,
+                                   data={"url": cand.page_url, "verdict": verdicts[-1]})
+                continue
+        winners.append(asset)
+        taken.add(key)
 
     if len(winners) >= n_min:
         await record_event(conn, "sourcing.beat_sourced",
-                           message=f"{brief_ref}: {len(winners)} distinct clips (min {n_min}, target {n_target})",
+                           message=f"{brief_ref}: {len(winners)} verified clips (min {n_min}, target {n_target})",
                            channel_id=channel_id, job_id=job_id,
-                           data={"asset_ids": [w.asset_id for w in winners]})
+                           data={"asset_ids": [w.asset_id for w in winners], "verdicts": verdicts})
         return winners
-    reason = (f"only {len(winners)} distinct clips (need ≥{n_min}) — "
-              + ("no candidates" if best == 0.0 else f"best {best:.2f}"))
+    rejected = sum(1 for v in verdicts if not v["ok"])
+    reason = (f"only {len(winners)} verified clips (need ≥{n_min}) — "
+              + ("no candidates" if best == 0.0 else f"best {best:.2f}")
+              + (f", {rejected} failed the vision gate" if rejected else ""))
     await record_event(conn, "sourcing.no_match", message=f"{brief_ref}: {reason}",
-                       channel_id=channel_id, job_id=job_id, data={"considered": list(considered)})
+                       channel_id=channel_id, job_id=job_id,
+                       data={"considered": list(considered), "verdicts": verdicts})
     return NoMatch(shot_brief_ref=brief_ref, reason=reason, considered=considered)
 
 

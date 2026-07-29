@@ -21,10 +21,29 @@ _STOP = {
     "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "from", "into", "under", "over",
     "with", "then", "perhaps", "above", "below", "across", "against", "beginning", "still", "very",
     "no", "up", "its", "his", "her", "their", "first", "single", "one", "some", "more", "most",
-    "faint", "dimming", "featureless", "vast", "dense", "small", "lone", "dark", "cold", "warm",
-    "seen", "showing", "visible", "possible", "distant", "far", "near", "toward", "towards",
-    "standing", "pressed", "together", "stretching", "colour", "color", "sky", "air", "light",
+    "faint", "dimming", "featureless", "vast", "dense", "small", "lone", "seen", "showing", "visible",
+    "possible", "distant", "far", "near", "toward", "towards", "standing", "pressed", "together",
+    "stretching", "colour", "color", "sky", "air", "light",
 }
+
+# Season/setting words are NOT dropped (they must reach the queries so wintery footage surfaces) and
+# double as vision-gate season expectations. NOTE: removed from _STOP above ('cold','dark','warm').
+_SETTING = {
+    "snow", "snowy", "snowfall", "winter", "wintry", "ice", "icy", "frost", "frozen", "blizzard",
+    "dusk", "dawn", "twilight", "night", "sunset", "sunrise", "autumn", "spring", "summer", "rain",
+    "desert", "forest", "boreal", "tundra", "arctic", "mountain", "coast", "ocean", "underwater",
+    "cold", "dark", "warm", "misty", "fog", "foggy",
+}
+
+
+def _setting_terms(brief: str) -> tuple[str, ...]:
+    """Season/setting words present in the brief (snow/winter/dusk/…) — reach queries + vision expect."""
+    toks = [w for w in _W.findall(_STAGE_DIR.sub(" ", brief).lower()) if w in _SETTING]
+    out: list[str] = []
+    for t in toks:
+        if t not in out:
+            out.append(t)
+    return tuple(out)
 
 
 def _keywords(brief: str) -> tuple[str, ...]:
@@ -45,32 +64,36 @@ def _keywords(brief: str) -> tuple[str, ...]:
     return tuple(phrases[:4]) or (("footage",) if not words else (words[0],))
 
 
-def _llm_plan(brief: str, llm) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """One CHEAP (Haiku) call: prose → (search phrases, SUBJECT terms). The subject is the single
-    thing the shot is ABOUT (e.g. 'emperor penguin', or 'antarctic ice' for a scene-setter) — the LLM
-    can tell the animal from the scenery where token-frequency can't. Returns ((),()) on failure."""
+def _llm_plan(brief: str, llm) -> tuple[tuple[str, ...], str, tuple[str, ...]]:
+    """One CHEAP (Haiku) call: prose → (search phrases, subject phrase, setting terms). Subject is the
+    single thing the shot is OF (e.g. 'grey wolf'); setting is the season/place (e.g. ['snow','winter'])
+    so wintery footage surfaces and the vision gate knows what to expect. Returns ((),'',()) on failure."""
     from ..providers.base import CacheableBlock, LLMRequest, ModelTier
 
     system = (CacheableBlock(
         "From the shot description, return STRICT JSON only: "
         '{"queries": [2-4 short stock-footage search phrases, 2-3 words, concrete nouns, no camera '
-        'directions like "wide"/"aerial"/"slow pan"], "subject": "the single main visual subject in '
-        '1-2 words (the animal/thing the shot is OF; for a pure scenery shot, the place/feature)"}. '
-        'Example: {"queries":["emperor penguin","penguin huddle"],"subject":"penguin"}.'),)
+        'directions like "wide"/"aerial"/"slow pan"; where the shot has a season/setting, include it in '
+        'at least one phrase e.g. "wolf in snow"], "subject": "the single main visual subject in 1-2 '
+        'words (the animal/thing the shot is OF)", "setting": ["season/place words like snow, winter, '
+        'dusk, forest — [] if none"]}. '
+        'Example: {"queries":["grey wolf snow","wolf pack winter forest"],"subject":"grey wolf",'
+        '"setting":["snow","winter"]}.'),)
     resp = llm.complete(LLMRequest(tier=ModelTier.CHEAP, system=system,
                                    messages=({"role": "user", "content": _STAGE_DIR.sub(" ", brief)},),
-                                   max_tokens=150, purpose="sourcing_query"))
+                                   max_tokens=180, purpose="sourcing_query"))
     s = resp.text.strip()
     start, end = s.find("{"), s.rfind("}")
     if start == -1 or end == -1:
-        return (), ()
+        return (), "", ()
     try:
         d = json.loads(s[start:end + 1])
         queries = tuple(str(x).strip() for x in d.get("queries", []) if str(x).strip())
-        subject = tuple(w for w in _W.findall(str(d.get("subject", "")).lower()) if len(w) > 2)
-        return queries[:4], subject
+        subject = " ".join(w for w in _W.findall(str(d.get("subject", "")).lower()) if len(w) > 2)
+        setting = tuple(str(x).strip().lower() for x in d.get("setting", []) if str(x).strip())
+        return queries[:4], subject, setting
     except Exception:  # noqa: BLE001 — malformed model output → deterministic fallback
-        return (), ()
+        return (), "", ()
 
 
 def _must_terms(queries: tuple[str, ...]) -> tuple[str, ...]:
@@ -86,13 +109,24 @@ def _must_terms(queries: tuple[str, ...]) -> tuple[str, ...]:
 
 def build_query_plan(brief: str, *, approx_seconds: int, target_fmt: str, llm=None) -> QueryPlan:
     orientation = _ORIENT.get(target_fmt, "landscape")
-    subject: tuple[str, ...] = ()
+    subject_phrase, setting = "", _setting_terms(brief)
     if llm is not None:
-        queries, subject = _llm_plan(brief, llm)
+        queries, subject_phrase, llm_setting = _llm_plan(brief, llm)
+        setting = tuple(dict.fromkeys(setting + llm_setting))   # union, brief-derived first, deduped
     else:
         queries = ()
     if not queries:                       # no LLM, or the call failed → deterministic fallback
         queries = _keywords(brief)
-    must = subject or _must_terms(queries)   # prefer the LLM subject; else the recurring token
+
+    subject_tokens = tuple(w for w in _W.findall(subject_phrase.lower()) if len(w) > 2)
+    must = subject_tokens or _must_terms(queries)   # prefer the LLM subject; else the recurring token
+
+    # Guarantee at least one query pairs subject + a setting term, so wintery/in-season footage surfaces
+    # (the vision gate is the hard check, but a season-blind query set rarely returns any in-season clip).
+    if setting and must:
+        pair = f"{' '.join(must[:2])} {setting[0]}"
+        if pair not in queries:
+            queries = (queries + (pair,))[:4]
+
     return QueryPlan(queries=queries, orientation=orientation, min_seconds=int(approx_seconds or 0),
-                     must_terms=must)
+                     must_terms=must, subject=subject_phrase or (must[0] if must else ""), setting=setting)

@@ -16,6 +16,14 @@ MATCH_THRESHOLD = 0.45   # the must-term SUBJECT filter is the real guard now; t
 #                          penguin's 0.44 beach clips). Subject correctness is enforced separately.
 _W = re.compile(r"[a-z0-9]+")
 
+# Metadata negative filter (free, before download): a clip whose tags/title/slug name a captive or
+# man-made setting is disqualified outright — wildlife must read as WILD (the wolf run served a fenced
+# enclosure clip). The vision gate is the deeper check; this kills the obvious ones cheaply.
+_NEGATIVE_TERMS = frozenset({
+    "fence", "fenced", "zoo", "captive", "captivity", "enclosure", "cage", "caged", "aquarium",
+    "farm", "pet", "leash", "circus", "sanctuary", "rescue", "petting", "corral", "pen",
+})
+
 
 def _tokens(*texts: str) -> set[str]:
     out: set[str] = set()
@@ -33,6 +41,11 @@ def score_candidate(c: Candidate, plan: QueryPlan, *, target_w: int, target_h: i
     must = set(plan.must_terms)
     if must and not (must & haystack):
         return 0.0, {"disqualified": "missing subject term", "must_terms": sorted(must)}
+
+    # Negative-setting filter: a captive/man-made tag disqualifies wildlife footage outright.
+    negs = _NEGATIVE_TERMS & haystack
+    if negs:
+        return 0.0, {"disqualified": "captive/man-made setting", "negative_terms": sorted(negs)}
 
     kw = (len(query_terms & haystack) / len(query_terms)) if query_terms else 0.0
 

@@ -57,6 +57,8 @@ class QueryPlan:
     orientation: str            # from the target format — DETERMINISTIC
     min_seconds: int            # = beat.approx_seconds — DETERMINISTIC
     must_terms: tuple[str, ...] = ()   # the recurring subject term(s) a candidate MUST contain
+    subject: str = ""           # the main subject as a short phrase (e.g. 'grey wolf') — vision expect
+    setting: tuple[str, ...] = ()      # season/setting terms (e.g. 'snow', 'winter') — vision expect
 
 
 @dataclass(frozen=True)
