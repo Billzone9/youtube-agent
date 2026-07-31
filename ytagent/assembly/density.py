@@ -46,6 +46,26 @@ def target_clips(length_s: float) -> int:
     return max(min_clips(length_s), round(length_s / SHOT_TARGET_S) or 1)
 
 
+def film_thresholds(runtime_s: float, n_beats: int, *, margin: float = 1.25) -> dict:
+    """Feasibility thresholds as a FUNCTION of the intended film shape (not hardcoded from the wolf).
+    Per beat of length runtime_s/n_beats: n_min = min_clips, n_target = target_clips. The wild+correct-
+    species YIELD must clear `floor` = Σn_min (the density minimum) and `target` = Σn_target × margin
+    (a working headroom over minimum) to be FEASIBLE. Returns the per-beat + film-level numbers."""
+    n = max(int(n_beats), 1)
+    beat_len = runtime_s / n
+    nmin, ntgt = min_clips(beat_len), max(target_clips(beat_len), min_clips(beat_len) + 1)
+    return {"runtime_s": round(runtime_s, 1), "n_beats": n, "beat_len_s": round(beat_len, 1),
+            "n_min_per_beat": nmin, "n_target_per_beat": ntgt,
+            "floor": nmin * n, "target": round(ntgt * n * margin)}
+
+
+def max_beats_for_yield(yield_est: float, beat_len_s: float) -> int:
+    """The most beats a pool of `yield_est` wild+correct-species clips can sustain at TARGET density for
+    beats of `beat_len_s` — i.e. how long a film the footage actually supports."""
+    ntgt = max(target_clips(beat_len_s), min_clips(beat_len_s) + 1)
+    return int(yield_est // ntgt) if ntgt else 0
+
+
 def _length(spec, beat, narration_s: dict | None) -> float:
     if narration_s and beat.name in narration_s:
         return float(narration_s[beat.name])

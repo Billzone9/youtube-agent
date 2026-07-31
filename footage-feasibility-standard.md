@@ -20,8 +20,19 @@ Supplying a season at probe time ("elephant in the dry season") repeats the wolf
   (with the definition-free, channel-general gate — the subject NAME only, no morphology handed).
 - Measures **pool depth E** (candidates eligible after the negative filter + must-term + threshold), and
   the **wild-and-correct-species yield** on a sample: `Y = (wild ∧ species clear_match ÷ sampled) × E`.
-- **Verdict on YIELD ALONE:** `FEASIBLE Y ≥ 20 · MARGINAL 12 ≤ Y < 20 · INFEASIBLE Y < 12` (Σn_min = 12,
-  Σn_target × 1.25 = 20, for a 4-beat ~150s film — SPECIFY-1).
+- **Verdict on YIELD ALONE**, against thresholds that SCALE WITH THE INTENDED FILM (not hardcoded from
+  the wolf): `density.film_thresholds(runtime_s, n_beats)` gives `floor = Σn_min` and
+  `target = Σn_target × 1.25` from the density standard for that shape. `FEASIBLE Y ≥ target · MARGINAL
+  floor ≤ Y < target · INFEASIBLE Y < floor`. (Wolf 157s/4b → 12/20; lion 394s/7b → 28/52.) The probe
+  also reports **`max_beats`** — the longest film the yield sustains at target density — so the target
+  LENGTH is chosen from what the footage supports, not assumed.
+
+- **POOL DEPTH IS SEARCH REACH, NOT LIBRARY DEPTH.** E counts what OUR queries surfaced, not what exists
+  (zebra — among the most-filmed plains animals — returned a pool of 8: a query-construction artifact).
+  So below `MIN_POOL_DEPTH` (15) the verdict is **`INCONCLUSIVE-SHALLOW`**, NOT INFEASIBLE: broaden the
+  queries (subject × scene vocabulary, higher per_page — `broad=True`) and re-probe before ANY INFEASIBLE
+  is believed. Slice 6's playbook must treat INCONCLUSIVE-SHALLOW as "search harder", never "skip the
+  subject" — else good subjects are silently lost forever.
 - **REPORTS the setting DISTRIBUTION** over the passing clips — season / habitat / time-of-day /
   shot-type, with depth per bucket. This is the raw material the footage-led script is written to. **An
   elephant pool that is overwhelmingly dry-season waterhole midday is not a failure — that is the film.**

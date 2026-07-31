@@ -11,17 +11,37 @@ Thresholds (SPECIFY-1, a 4-beat ~150s film): Σn_min = 12 (floor), Σn_target ×
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 
+from ..assembly.density import film_thresholds, max_beats_for_yield
 from ..events import record_event
 from . import vision as _vision
+from .base import QueryPlan
 from .download import download
 from .gate import gate_download
 from .query import build_query_plan
 from .rank import MATCH_THRESHOLD, rank_candidates
 
-T_FLOOR, T_TARGET = 12, 20     # wild-in-species yield: INFEASIBLE < 12 ≤ MARGINAL < 20 ≤ FEASIBLE
+# Pool depth E measures SEARCH REACH, not library depth: a shallow E means "search harder", not
+# "subject unavailable". Below this, the verdict is INCONCLUSIVE-SHALLOW (broaden + re-probe before
+# believing any INFEASIBLE) — zebra returned 8 for one of the most-filmed animals on the plains.
+MIN_POOL_DEPTH = 15
+
+# Broad-mode query expansion — subject × scene vocabulary, to widen search reach past a narrow plan.
+_SCENE_TERMS = ("", "herd", "wild", "safari", "savanna", "grassland", "africa", "walking", "running",
+                "waterhole", "close up", "calf", "family", "portrait", "dust", "sunset")
+
+
+def _broad_plan(subject: str, target_fmt: str) -> QueryPlan:
+    s = subject.lower()
+    head = [w for w in re.findall(r"[a-z]+", s) if len(w) > 2][-1:] or [s]
+    short = head[0]                                   # 'african elephant' → 'elephant' (a wider net)
+    queries = list(dict.fromkeys([s] + [f"{short} {t}".strip() for t in _SCENE_TERMS]))[:14]
+    orient = "portrait" if target_fmt == "9:16" else "landscape"
+    return QueryPlan(queries=tuple(queries), orientation=orient, min_seconds=8,
+                     must_terms=(short,), subject=subject)
 
 # Loose keyword buckets for the observed free-text setting labels → a readable distribution.
 _SEASON_BUCKETS = {"snow/winter": ("snow", "winter", "frost", "ice"), "dry": ("dry",),
@@ -64,7 +84,10 @@ class FeasibilityReport:
     wild_match: int
     both_match: int                 # wild AND correct-species (the yield basis)
     yield_est: float                # Y = (both_match / sampled) × E
-    verdict: str                    # FEASIBLE | MARGINAL | INFEASIBLE
+    verdict: str                    # FEASIBLE | MARGINAL | INFEASIBLE | INCONCLUSIVE-SHALLOW
+    thresholds: dict = field(default_factory=dict)     # floor/target for the intended film shape
+    max_beats: int = 0              # most beats Y sustains at target density (the film length it supports)
+    broad: bool = False
     season_dist: dict = field(default_factory=dict)
     habitat_dist: dict = field(default_factory=dict)
     time_dist: dict = field(default_factory=dict)
@@ -74,17 +97,35 @@ class FeasibilityReport:
     verdicts: list = field(default_factory=list)
 
 
-def _verdict(y: float) -> str:
-    return "FEASIBLE" if y >= T_TARGET else ("MARGINAL" if y >= T_FLOOR else "INFEASIBLE")
+def _verdict(y: float, E: int, floor: int, target: int) -> str:
+    if E < MIN_POOL_DEPTH:          # search reach, not library depth — broaden before believing INFEASIBLE
+        return "INCONCLUSIVE-SHALLOW"
+    return "FEASIBLE" if y >= target else ("MARGINAL" if y >= floor else "INFEASIBLE")
 
 
 async def probe_feasibility(conn, providers, subject: str, *, llm, channel_id, sample_n: int = 10,
                             target_fmt: str = "16:9", target_w: int = 1920, target_h: int = 1080,
-                            cache_dir: str = "assets/sourced") -> FeasibilityReport:
-    from .orchestrator import _search_all       # reuse the search+dedup
+                            cache_dir: str = "assets/sourced", broad: bool = False,
+                            runtime_s: float = 394.0, n_beats: int = 7,
+                            per_page: int = 15) -> FeasibilityReport:
+    """`runtime_s`/`n_beats` default to the LION BENCHMARK (6:34, 7 beats) so the verdict is judged
+    against the bar we must stand next to; `broad=True` widens search reach (subject × scene vocabulary,
+    higher per_page)."""
+    thr = film_thresholds(runtime_s, n_beats)
+    plan = (_broad_plan(subject, target_fmt) if broad
+            else build_query_plan(subject, approx_seconds=8, target_fmt=target_fmt, llm=llm))
+    pp = max(per_page, 40) if broad else per_page
 
-    plan = build_query_plan(subject, approx_seconds=8, target_fmt=target_fmt, llm=llm)   # season-agnostic
-    seen = await _search_all(providers, plan, conn, channel_id)
+    seen: dict = {}
+    for prov in providers:
+        for q in plan.queries:
+            try:
+                cands = await prov.search(q, orientation=plan.orientation,
+                                          min_duration=plan.min_seconds, per_page=pp)
+            except Exception:  # noqa: BLE001
+                continue
+            for c in cands:
+                seen.setdefault((c.source, c.asset_id), (c, q))
     ranked = rank_candidates([c for c, _ in seen.values()], plan, target_w=target_w, target_h=target_h)
     eligible = [(s, c) for s, c, _ in ranked if s >= MATCH_THRESHOLD]
     E = len(eligible)
@@ -119,7 +160,9 @@ async def probe_feasibility(conn, providers, subject: str, *, llm, channel_id, s
 
     report = FeasibilityReport(
         subject=subject, pool_depth=E, sampled=sampled, species_match=species_match,
-        wild_match=wild_match, both_match=len(both), yield_est=Y, verdict=_verdict(Y),
+        wild_match=wild_match, both_match=len(both), yield_est=Y,
+        verdict=_verdict(Y, E, thr["floor"], thr["target"]), thresholds=thr, broad=broad,
+        max_beats=max_beats_for_yield(Y, thr["beat_len_s"]),
         season_dist=_distribution(both, "season", _SEASON_BUCKETS),
         habitat_dist=_distribution(both, "habitat", _HABITAT_BUCKETS),
         time_dist=_distribution(both, "time", _TIME_BUCKETS),

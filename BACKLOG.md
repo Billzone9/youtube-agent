@@ -52,6 +52,16 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   label (→ INCONCLUSIVE), not the underlying zero verified clips.** Root-cause when the detector is next
   touched; not worth chasing now.
 
+## Known defect — species discrimination WITHIN a family is unproven (from the feasibility slice, 2026-08)
+- `[ ]` **BLOCKER before any look-alike subject (leopard/cheetah, small cats, most raptors).** Removing
+  the morphology definitions fixed over-strictness, but the definition-free gate now reads the old coyote
+  clip (142472) as a grey wolf, and the live calibration only tests CROSS-family discrimination (a lion
+  is not a wolf — trivially easy). Within-family discrimination (wolf vs coyote, leopard vs cheetah) is
+  therefore UNPROVEN. Elephants/giraffes/zebra have no look-alikes, so this does NOT block film #2 — but
+  it must be solved (per-subject confusable list handed as DATA? a two-stage "is it X or the look-alike Y"
+  prompt?) before any subject that shares a silhouette. Feasibility should also flag "look-alike risk" per
+  subject so the playbook avoids these until it's solved.
+
 ## Vision gate — hardening (PROMOTED into the feasibility slice, 2026-07-31 — no longer deferred)
 The two items below are now IN the feasibility slice (changing subject requires a channel-general gate):
 - `[ ]` **VISION GATE IS NOT CHANNEL-GENERAL — fix before the SECOND subject (BLOCKER for subject #2).**
