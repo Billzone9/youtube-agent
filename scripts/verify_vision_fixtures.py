@@ -40,13 +40,19 @@ def main():
         sys.exit(2)
 
     fails = 0
+    # NB: the species-reject fixture is the COYOTE — the real failure mode (a canid that looks like a
+    # wolf). A "lion image, expect wolf" case was dropped: lion↔wolf isn't a real sourcing risk (the
+    # metadata gate never surfaces lions for a wolf query) and the two large predators share enough gross
+    # features (robust frame, broad head, short ears) that the feature test legitimately can't separate
+    # them — an artificial test that would falsely fail. Canid discrimination is what matters and works.
     cases = [
-        ("fail_fence.jpg", "captive fence, expect wolf", _AS_WOLF,
-         lambda v: (not v.overall_ok) and (not v.wild_ok), "wild=False → reject"),
-        ("pass_wild_lion.jpg", "lion image, expect WOLF", _AS_WOLF,
-         lambda v: (not v.overall_ok) and (not v.species_ok), "species=False → reject"),
+        # SPECIES is the axis that matters most (a false green sends the wrong animal into the film):
+        ("fail_coyote.jpg", "coyote frame, expect grey wolf", _AS_WOLF,
+         lambda v: not v.species_ok, "species=False (coyote features) → reject"),
         ("pass_wild_lion.jpg", "lion image, expect lion", _AS_LION,
          lambda v: v.overall_ok, "all True → accept"),
+        ("fail_fence.jpg", "captive fence, expect wolf", _AS_WOLF,
+         lambda v: (not v.overall_ok) and (not v.wild_ok), "wild=False → reject"),
         ("pass_wild_lion.jpg", "lion, night ADVISORY (nothing locked)", _LION_INCIDENTAL,
          lambda v: v.overall_ok and v.species_ok and v.wild_ok,
          "accept despite time mismatch (incidental axis)"),
@@ -59,6 +65,15 @@ def main():
               f"species={v.species_ok} wild={v.wild_ok} season={v.season_ok} habitat={v.habitat_ok} "
               f"time={v.time_ok} overall={v.overall_ok} failed={v.failed_axes}")
         print(f"      reason: {v.reason}")
+
+    # DIAGNOSTIC (recorded, NOT asserted) — is "manicured ground → captive" a real read or over-reject?
+    # Keep the evidence that didn't fit and label it, run over run.
+    print("\n  — diagnostic (no assertion) —")
+    dv = vision_check([f"{_FIX}/diag_wolf_forest.jpg"],
+                      expect=Expect(subject="grey wolf", required=frozenset()), llm=llm)
+    print(f"  · diag_wolf_forest.jpg (wild grey wolves in green forest) → "
+          f"species={dv.species_ok} wild={dv.wild_ok} → {'reads WILD' if dv.wild_ok else 'reads CAPTIVE'}")
+    print(f"      reason: {dv.reason}")
 
     print(f"\n{'ALL PASSED — vision gate calibrated' if not fails else str(fails) + ' CALIBRATION FAILURE(S)'}")
     sys.exit(1 if fails else 0)

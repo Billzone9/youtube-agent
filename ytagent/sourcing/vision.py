@@ -67,18 +67,28 @@ class VisionVerdict:
 
 _SYSTEM = (
     "You are a strict stock-footage QA checker for a WILD-animal documentary. You are shown a few frames "
-    "sampled from ONE video clip, plus what the shot is SUPPOSED to contain, broken out into SEPARATE "
-    "axes. Judge EACH axis INDEPENDENTLY and ONLY from what is visible — never let one axis influence "
-    "another (a correct wild animal in the wrong season is species_ok=true, season_ok=false). Return "
-    "STRICT JSON only: {\"species_ok\": bool, \"wild\": bool, \"season_ok\": bool, \"habitat_ok\": bool, "
-    "\"time_ok\": bool, \"reason\": str}. Rules: species_ok=true ONLY if the main animal clearly matches "
-    "the expected subject — a similar-looking DIFFERENT species (coyote/jackal/domestic dog vs grey "
-    "wolf) is false. wild=true ONLY if genuinely wild/natural with NO captivity or human construction "
-    "(fence, bars, cage, wall, building, zoo/park, manicured ground → false). season_ok=true ONLY if the "
-    "visible SEASON matches the expected season terms (judge season ALONE — snow/greenery/etc., not the "
-    "habitat or time). habitat_ok=true ONLY if the visible HABITAT matches. time_ok=true ONLY if the "
-    "visible TIME OF DAY / light matches. For any axis with NO expectation given, return true. Be "
-    "conservative per axis: if an axis is unclear, false with a short reason naming WHICH axis."
+    "from ONE clip plus what the shot is SUPPOSED to contain, broken into axes. Judge the SETTING axes "
+    "(season, habitat, time) independently of EACH OTHER and of the animal — a correct animal in the "
+    "wrong season is species_ok=true, season_ok=false. But judge SPECIES rigorously and SCEPTICALLY: a "
+    "false 'yes' on species is the worst error (it sends the wrong animal into the film), so when in "
+    "doubt, say false.\n"
+    "Return STRICT JSON only, in THIS ORDER (reason the species out BEFORE deciding it):\n"
+    '{"species_features": "<the distinguishing features you actually SEE — muzzle length/breadth, head '
+    'and body size/frame, ear size and proportion to the head, leg length, coat/markings>", '
+    '"species_ok": bool, "wild": bool, "season_ok": bool, "habitat_ok": bool, "time_ok": bool, '
+    '"reason": str}.\n'
+    "SPECIES rules: name the features first, then decide. A GREY WOLF has a long broad muzzle, a large "
+    "blocky head, a heavy deep-chested frame, long legs, and ears SHORT relative to the head. A COYOTE "
+    "or JACKAL is markedly smaller and slighter, with a narrow pointed muzzle and LARGE ears relative to "
+    "a small head. A DOMESTIC DOG or WOLF-DOG HYBRID shows domesticated features (softer face, curled "
+    "tail, patchy/piebald coat, collar). species_ok=true ONLY if the visible features clearly match the "
+    "expected subject; if they read as coyote/jackal/dog/hybrid, or you cannot be confident it is the "
+    "exact expected species, species_ok=FALSE.\n"
+    "wild=true ONLY if genuinely wild/natural with NO captivity or human construction (fence, bars, "
+    "cage, wall, building, zoo/park, leash, manicured/compacted ground → false). season_ok=true ONLY if "
+    "the visible SEASON matches the expected season terms (snow/greenery/etc.). habitat_ok=true ONLY if "
+    "the visible HABITAT matches. time_ok=true ONLY if the visible TIME OF DAY / light matches. For any "
+    "axis with NO expectation given, return true."
 )
 
 
@@ -131,7 +141,7 @@ def vision_check(frames: list[str], *, expect: Expect, llm, channel_id=None, job
     content.append({"type": "text", "text": _expect_text(expect)})
     resp = llm.complete(LLMRequest(
         tier=ModelTier.CHEAP, system=(CacheableBlock(_SYSTEM),),
-        messages=({"role": "user", "content": content},), max_tokens=300, purpose="vision_gate",
+        messages=({"role": "user", "content": content},), max_tokens=450, purpose="vision_gate",
         channel_id=channel_id, job_id=job_id))
     s = resp.text.strip()
     a, b = s.find("{"), s.rfind("}")
@@ -157,7 +167,11 @@ def vision_check(frames: list[str], *, expect: Expect, llm, channel_id=None, job
     for axis in _SETTING_AXES:                       # only REQUIRED setting axes can fail the overall
         if axis in expect.required and not axis_ok[axis]:
             failed.append(axis)
+    feat = str(d.get("species_features", "")).strip()
+    reason = str(d.get("reason", "")).strip()
+    if feat:                                          # keep the species reasoning visible in the verdict
+        reason = f"[species: {feat[:120]}] {reason}"
     return VisionVerdict(
         overall_ok=not failed, species_ok=species_ok, wild_ok=wild_ok,
         season_ok=axis_ok["season"], habitat_ok=axis_ok["habitat"], time_ok=axis_ok["time_of_day"],
-        failed_axes=tuple(failed), reason=str(d.get("reason", ""))[:200])
+        failed_axes=tuple(failed), reason=reason[:280])

@@ -43,6 +43,16 @@ _BEATS = [
      "grey wolf howling in the snow at dusk in winter, lone wolf silhouette against snowy twilight in the evening"),
 ]
 
+# The briefs used by the CONTAMINATED Stage-1 run (before the gate fix), kept so the run output can
+# state exactly what changed. The clean run differs from the contaminated one in TWO ways: the gate fix
+# (separated axes + stronger species) AND this brief rewrite (explicit film-wide winter/snow wording).
+_OLD_BRIEFS = {
+    1: "grey wolf pack resting in snowy boreal forest before dawn, wolves lying in snow, misty winter woods",
+    2: "grey wolf with thick winter coat walking and trotting through deep snow, wolf in falling snow",
+    3: "grey wolf nose to the ground tracking a scent, wolf pack moving single file through deep snow",
+    4: "grey wolf howling at dusk, lone wolf silhouette against twilight, wolf in the evening forest",
+}
+
 # Per-beat axis requiredness (the Amendment). Season BLOCKS on every beat (film-level winter). Time
 # BLOCKS only where the beat's meaning locks it: beat1 "Before the pack wakes" → dawn; beat4 "edge of
 # dark" → dusk. Habitat stays ADVISORY (the labels don't lock it; the brief only incidentally names
@@ -87,6 +97,13 @@ async def stage1(conn, settings):
                            channel_id=channel["id"], job_id=job["id"])
 
     print("=== STAGE 1 — CURATION + VISION GATE (no Music spend, no upload) ===")
+    print("TWO variables changed vs the contaminated run — read the result honestly:")
+    print("  (1) the GATE FIX: setting axes separated (season/habitat/time judged independently), "
+          "species judged feature-first + sceptically; per-beat requiredness.")
+    print("  (2) the BRIEF REWRITE: explicit film-wide winter/snow wording. Old → new per beat:")
+    for i, _, new in _BEATS:
+        print(f"      beat{i} OLD: {_OLD_BRIEFS[i]}")
+        print(f"      beat{i} NEW: {new}")
     print(f"measured narration: " + ", ".join(f"beat{i} {lengths[i]:.1f}s" for i, _, _ in _BEATS)
           + f"  (total {sum(lengths.values()):.1f}s)\n")
     report = await produce.curate_report(
@@ -94,45 +111,58 @@ async def stage1(conn, settings):
         length_of=lambda b: lengths[b.index], required_of=_required_axes)
     await produce._drain_llm(conn, sink, pricing, channel_id=channel["id"], job_id=job["id"])
 
-    all_ok = True
+    _SCARCITY = ("species", "wild", "season")
+    _INCIDENTAL = ("habitat", "time_of_day")
+    short_scarcity, short_incidental = 0, 0
     for r in report:
         mark = "✅ PASS" if r["reached_min"] else "❌ NEEDS WORK"
-        all_ok = all_ok and r["reached_min"]
         print(f"beat{r['beat']} '{r['label']}' — {mark}: {r['verified']} verified / {r['n_min']} min "
               f"(target {r['n_target']}, {r['narration_s']}s)  [BLOCKING: species, wild, "
               f"{', '.join(r['required_axes'])}]")
+
+        # accepted winners — and how often a winner was OFF on an ADVISORY (unlocked) axis
+        adv = {"habitat": 0, "time": 0}
+        for v in r["verdicts"]:
+            if v["ok"]:
+                if v.get("habitat") is False:
+                    adv["habitat"] += 1
+                if v.get("time") is False:
+                    adv["time"] += 1
         for a in r["accepted"]:
             print(f"    ✓ {a['asset_id']}  {a['url']}")
-        # per-axis rejection breakdown (the clean-evidence answer): which axis each miss died on
-        axis_tally = {}
+        if r["accepted"] and (adv["habitat"] or adv["time"]):
+            print(f"    (accepted winners off on an advisory axis: habitat×{adv['habitat']}, time×{adv['time']})")
+
+        # per-axis rejection breakdown for THIS beat → its dominant failure axis
+        beat_tally = {}
         for v in r["verdicts"]:
             if not v["ok"]:
                 for ax in (v.get("failed_axes") or []):
-                    axis_tally[ax] = axis_tally.get(ax, 0) + 1
+                    beat_tally[ax] = beat_tally.get(ax, 0) + 1
                 print(f"    ✗ {v['asset_id']} — failed {','.join(v.get('failed_axes') or [])}: {v['reason'][:100]}")
-        if axis_tally:
-            print(f"    rejection breakdown: " + ", ".join(f"{k}×{n}" for k, n in sorted(axis_tally.items())))
+        if beat_tally:
+            print(f"    rejection breakdown: " + ", ".join(f"{k}×{n}" for k, n in sorted(beat_tally.items())))
         if not r["reached_min"]:
-            print(f"    → {r['reason']}")
+            dominant = max(beat_tally, key=beat_tally.get) if beat_tally else "none"
+            kind = "SCARCITY" if dominant in _SCARCITY else ("INCIDENTAL" if dominant in _INCIDENTAL else "?")
+            if dominant in _SCARCITY:
+                short_scarcity += 1
+            elif dominant in _INCIDENTAL:
+                short_incidental += 1
+            print(f"    → SHORT — dominant failure axis: {dominant} ({kind}); {r['reason']}")
 
-    # SPECIFY-2 decision rule, applied to the numbers
-    short = [r for r in report if not r["reached_min"]]
-    dom = {}
-    for r in report:
-        for v in r["verdicts"]:
-            for ax in (v.get("failed_axes") or []):
-                dom[ax] = dom.get(ax, 0) + 1
-    scarcity = sum(dom.get(a, 0) for a in ("species", "wild", "season"))
-    incidental = sum(dom.get(a, 0) for a in ("habitat", "time_of_day"))
-    if not short:
+    # SPECIFY-2 decision rule, computed PER SHORT BEAT (not aggregated over successful beats):
+    if short_scarcity == 0 and short_incidental == 0:
         verdict = "PASS — every beat reached n_min. Ready for Stage 2 on your go."
-    elif scarcity >= incidental:
-        verdict = "FAIL — shortfall is subject×season scarcity (species/wild/season dominate). The A/B/C fork."
+    elif short_scarcity >= 1:
+        verdict = (f"FAIL — {short_scarcity} short beat(s) dominated by subject×season scarcity "
+                   "(species/wild/season). A scarcity beat can't be re-briefed → the A/B/C fork.")
     else:
-        verdict = "MARGINAL — shortfall is incidental (habitat/time). Re-brief the short beats, don't change subject."
+        verdict = (f"MARGINAL — {short_incidental} short beat(s) dominated by an INCIDENTAL axis "
+                   "(habitat/time lock). Re-brief/relax those beats; don't change the subject.")
     bud = await budget_status(conn)
     print(f"\nStage-1 decision: {verdict}")
-    print(f"per-axis totals across all beats: {dict(sorted(dom.items()))}")
+    print(f"short beats: {short_scarcity} scarcity-dominant, {short_incidental} incidental-dominant")
     print(f"spend this run: LLM (Haiku query+vision) only; month-to-date £{bud['month_spend_gbp']:.2f} "
           f"/ £{bud['ceiling_gbp']:.0f} ({bud['tier']}). No Music spent.")
 
