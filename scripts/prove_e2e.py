@@ -113,11 +113,12 @@ async def stage1(conn, settings):
 
     _INCIDENTAL = ("habitat", "time_of_day")
     short = {"wild": 0, "species": 0, "season": 0, "incidental": 0}
-    total_contradictions = total_echo = 0
+    total_contradictions = total_echo = total_winner_def_echo = 0
     for r in report:
         mark = "✅ PASS" if r["reached_min"] else "❌ NEEDS WORK"
         total_contradictions += r.get("contradictions", 0)
         total_echo += len(r.get("echo_pairs", []))
+        total_winner_def_echo += len(r.get("winners_def_echoed", []))
         print(f"beat{r['beat']} '{r['label']}' — {mark}: {r['verified']} verified "
               f"({r.get('clear', 0)} clear + {len(r.get('uncertain_used', []))} uncertain-used) / "
               f"{r['n_min']} min (target {r['n_target']}, {r['narration_s']}s)  "
@@ -128,8 +129,12 @@ async def stage1(conn, settings):
         if r.get("contradictions"):
             print(f"    ⚠ {r['contradictions']} evidence↔verdict CONTRADICTION(S) — gate may be miscalibrated")
         if r.get("echo_pairs"):
-            print(f"    ⚠ {len(r['echo_pairs'])} PROMPT-ECHO pair(s) (near-identical features across "
-                  f"different clips) — gate RECITING, not observing; its verdicts here are not evidence")
+            print(f"    ⚠ {len(r['echo_pairs'])} CLIP-ECHO pair(s) (near-identical features, DIFFERENT "
+                  f"verdicts) — gate gave different answers to the same evidence")
+        if r.get("winners_def_echoed"):
+            print(f"    ⚠ {len(r['winners_def_echoed'])} ACCEPTED clip(s) whose features RECITE a "
+                  f"definition (≥0.8) — those acceptances may be recitation, not observation: "
+                  f"{r['winners_def_echoed']}")
 
         # rejection breakdown for THIS beat → its dominant reject driver
         beat_tally = {}
@@ -151,9 +156,9 @@ async def stage1(conn, settings):
     # Decision rule (per short beat) with the world-(B) INFEASIBLE-WILD branch made explicit:
     n_short = sum(short.values())
     if total_contradictions > 0 or total_echo > 0:
-        verdict = (f"INCONCLUSIVE — {total_contradictions} contradiction(s) + {total_echo} prompt-echo "
-                   "pair(s): the gate is reciting/fighting its own evidence, not observing. Recalibrate "
-                   "before trusting ANY scarcity conclusion.")
+        verdict = (f"INCONCLUSIVE — {total_contradictions} contradiction(s) + {total_echo} clip-echo "
+                   "pair(s): the gate gave inconsistent answers to the same evidence. Recalibrate before "
+                   "trusting ANY scarcity conclusion.")
     elif n_short == 0:
         verdict = "PASS — every beat reached n_min. Ready for Stage 2 on your go."
     elif short["wild"] >= 1 and short["wild"] >= short["species"] + short["season"]:
@@ -169,7 +174,10 @@ async def stage1(conn, settings):
     bud = await budget_status(conn)
     print(f"\nStage-1 decision: {verdict}")
     print(f"short beats by dominant axis: {dict((k, v) for k, v in short.items() if v)}  "
-          f"| contradictions: {total_contradictions}")
+          f"| contradictions: {total_contradictions} | clip-echo: {total_echo}")
+    if total_winner_def_echo:
+        print(f"CAVEAT: {total_winner_def_echo} ACCEPTED clip(s) recite a definition (≥0.8 containment) — "
+              "read any PASS with suspicion; the acceptances may be recitation, not observation.")
     print(f"spend this run: LLM (Haiku query+vision) only; month-to-date £{bud['month_spend_gbp']:.2f} "
           f"/ £{bud['ceiling_gbp']:.0f} ({bud['tier']}). No Music spent.")
 

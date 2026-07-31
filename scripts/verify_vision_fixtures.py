@@ -23,7 +23,8 @@ import os
 
 from ytagent.config import load_settings
 from ytagent.providers import ListUsageSink, get_llm_provider
-from ytagent.sourcing.vision import (CLEAR_MATCH, CLEAR_MISMATCH, Expect, classify, vision_check)
+from ytagent.sourcing.vision import (CLEAR_MATCH, CLEAR_MISMATCH, Expect, classify, definition_echo,
+                                     vision_check)
 
 _FIX = "tests/fixtures/vision"
 _AS_WOLF = Expect(subject="grey wolf", season=("winter", "snow"), required=frozenset({"season"}))
@@ -81,9 +82,11 @@ def _run(llm):
         cat = classify(v, expect)
         ok = want(v, cat)
         fails += 0 if ok else 1
+        de = definition_echo(v.features)
         print(f"  {PASS if ok else FAIL} {name} ({desc}) → want {expect_str}; got "
               f"species={v.species} wild={v.wild} season={v.season_ok} habitat={v.habitat_ok} "
               f"time={v.time_ok} → {cat[0]}{' CONTRADICTION' if v.contradiction else ''}")
+        print(f"      def-echo: {de} (≥0.8 = features recite the definition, not the image)")
         print(f"      reason: {v.reason}")
 
     # Positive CANID (species clear_match) fixture — a confirmed wolf. Pending Banks's frame pick; when

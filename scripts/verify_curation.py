@@ -100,15 +100,25 @@ def main():
     vd2 = vision_check([_FRAME], expect=wolf, llm=_FakeVisionLLM(_v(species=CLEAR_MATCH, indicate="grey wolf")))
     check("features say wolf and verdict accepts → contradiction=False", vd2.contradiction is False)
 
-    print("[4c] PROMPT-ECHO detected (near-identical features across DIFFERENT clips = reciting)")
-    from ytagent.sourcing.vision import detect_echo
-    echo = "Narrow pointed muzzle, relatively large ears proportional to head size, slender frame, long legs"
-    diff = "Broad heavy muzzle, large blocky head, thick neck and deep chest, short ears, robust frame"
-    check("two different clips, near-identical features → flagged",
-          len(detect_echo([("a", echo), ("b", echo + ", tan coat")])) == 1)
-    check("two different clips, genuinely different features → not flagged",
-          len(detect_echo([("a", echo), ("b", diff)])) == 0)
-    check("same clip id never self-flags", len(detect_echo([("a", echo), ("a", echo)])) == 0)
+    print("[4c] CLIP-ECHO fires only on DIFFERENT verdicts (density-compatible)")
+    from ytagent.sourcing.vision import _DEF_ECHO_THRESHOLD, definition_echo, detect_echo
+    CM, MM = CLEAR_MATCH, CLEAR_MISMATCH
+    # THE density case: four genuinely different clips of the SAME subject, all clear_match → NO flag.
+    four_wolves = [("a", "broad muzzle, blocky head", CM), ("b", "heavy frame, deep chest, long legs", CM),
+                   ("c", "thick neck, robust build", CM), ("d", "large paws, bushy tail, alert ears", CM)]
+    check("4 different same-VERDICT clips → NO clip-echo (density-safe)", len(detect_echo(four_wolves)) == 0)
+    ident = "narrow pointed muzzle, large ears, slender frame, long legs"
+    check("near-identical features but DIFFERENT verdicts → flagged",
+          len(detect_echo([("a", ident, CM), ("b", ident, MM)])) == 1)
+    check("identical features, SAME verdict → NOT flagged (expected recurrence)",
+          len(detect_echo([("a", ident, MM), ("b", ident, MM)])) == 0)
+
+    print("[4d] DEFINITION-ECHO flags features that RECITE a prompt definition")
+    recite = definition_echo("long broad muzzle, large blocky head, heavy deep-chested frame, long legs, ears short")
+    check("verbatim wolf-definition features → high def-echo",
+          max(recite.values()) >= _DEF_ECHO_THRESHOLD, str(recite))
+    specific = definition_echo("one wolf mid-stride, tongue out, snow spraying off the left forepaw")
+    check("specific observation → low def-echo", max(specific.values()) < _DEF_ECHO_THRESHOLD, str(specific))
 
     print("[5] Item 6 — vision gate FAILS LOUD when required but no LLM")
     async def _no_llm():

@@ -195,24 +195,54 @@ def _majority_label(labels: list[str]) -> str:
     return best if labels.count(best) > len(labels) / 2 else UNCERTAIN
 
 
-_ECHO_THRESHOLD = 0.75   # feature-string similarity above which two DIFFERENT clips read as prompt-echo
+_ECHO_THRESHOLD = 0.75    # feature-string similarity above which two clips' descriptions are "identical"
+_DEF_ECHO_THRESHOLD = 0.80   # definition-containment above which a clip's features RECITE a definition
+
+# The morphology the PROMPT offers as examples — definition-echo measures how much a clip's `features`
+# RECITE these rather than describe the specific frame. Keep in sync with _SYSTEM.
+_PROMPT_DEFINITIONS = {
+    "grey wolf": "long broad muzzle large blocky head heavy deep chested frame long legs ears short",
+    "coyote/jackal": "smaller slighter narrow pointed muzzle large ears small head",
+}
+_DEF_STOP = frozenset(
+    "the and to of with relative proportional size appears moderately overall along back sides compared "
+    "body length its has dark coat markings white grey tan brown saddle build reddish golden".split())
 
 
 def features_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, (a or "").lower(), (b or "").lower()).ratio()
 
 
-def detect_echo(items: list[tuple[str, str]], *, threshold: float = _ECHO_THRESHOLD) -> list[tuple]:
-    """PROMPT-ECHO detector (same self-check family as the contradiction detector). `items` = list of
-    (clip_id, species_features). Two DIFFERENT clips whose feature descriptions are near-identical is a
-    sign the model is RECITING a definition, not observing the frame (e.g. a wide pack shot and a tight
-    close-up yielding verbatim-identical 'features'). Returns [(id_a, id_b, similarity)] over threshold —
-    when nonzero, the gate's verdicts on those clips are NOT trustworthy evidence."""
+def _content_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z]+", (text or "").lower()) if len(w) > 2 and w not in _DEF_STOP}
+
+
+def definition_echo(features: str) -> dict:
+    """DEFINITION-ECHO: for each prompt definition, the fraction of ITS content words present in the
+    clip's `features` (containment). High (≥_DEF_ECHO_THRESHOLD) means the description tracks the CANNED
+    definition, not the specific image — a recitation risk (the accepted wolves scored 0.85–1.0). This
+    is REPORTED, not auto-blocking: a real animal legitimately matches its own definition, so the number
+    INFORMS how much to trust the verdict rather than overriding it."""
+    fw = _content_words(features)
+    out = {}
+    for name, dfn in _PROMPT_DEFINITIONS.items():
+        dw = _content_words(dfn)
+        out[name] = round(len(dw & fw) / len(dw), 2) if dw else 0.0
+    return out
+
+
+def detect_echo(items: list[tuple], *, threshold: float = _ECHO_THRESHOLD) -> list[tuple]:
+    """CLIP-vs-CLIP echo. `items` = (clip_id, features, species_label). Flags DIFFERENT clips whose
+    feature text is near-identical BUT whose species VERDICTS DIFFER — the gate gave different answers to
+    the same-looking evidence. Near-identical features with the SAME verdict are EXPECTED (multiple
+    accurate shots of the same subject — the density standard requires 3–4 same-subject clips per beat)
+    and never flag. Returns [(id_a, id_b, similarity)]."""
     out: list[tuple] = []
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
-            (ida, fa), (idb, fb) = items[i], items[j]
-            if ida == idb or not fa or not fb:
+            ida, fa, sa = items[i]
+            idb, fb, sb = items[j]
+            if ida == idb or not fa or not fb or sa == sb:   # same verdict → expected, not a signal
                 continue
             s = features_similarity(fa, fb)
             if s >= threshold:

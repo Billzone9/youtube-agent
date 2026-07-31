@@ -24,14 +24,22 @@ before drawing ANY scarcity/feasibility conclusion (Stage-1 returns INCONCLUSIVE
 1. **Evidence↔verdict CONTRADICTION** (`VisionVerdict.contradiction`). The model emits both the
    observed features and a `features_indicate` (the species those features point to). If
    `features_indicate` names the expected subject but the label is `clear_mismatch` (or names another
-   species but the label is `clear_match`), it is **fighting its own evidence** — the failure that
-   over-corrected the wolf gate (it recited the wolf definition, then said not-wolf). A `_NOT_CLEAN`
-   qualifier list (`hybrid`, `dog`, `coyote`…) prevents "wolf-dog hybrid" false-positives.
-2. **PROMPT-ECHO** (`detect_echo`). If TWO DIFFERENT clips (a wide pack shot and a tight close-up)
-   yield near-identical feature descriptions (SequenceMatcher ratio ≥ 0.75), the model is **RECITING a
-   definition, not observing the frame**. Real observation of different framings produces different
-   text (the confirmed wolf's features differed from the coyotes' at ~0.38; the two recited coyotes
-   matched at 0.82). Calibrated to that split.
+   species but the label is `clear_match`), it is **fighting its own evidence**. A `_NOT_CLEAN`
+   qualifier list (`hybrid`, `dog`, `coyote`…) prevents "wolf-dog hybrid" false-positives. Hard signal.
+2. **CLIP-vs-CLIP echo** (`detect_echo`, hard signal). Two DIFFERENT clips with near-identical features
+   (SequenceMatcher ≥ 0.75) **but DIFFERENT species verdicts** — the gate gave different answers to the
+   same-looking evidence. **Same-verdict near-identical features do NOT flag**: the density standard
+   REQUIRES 3–4 accurate shots of the same subject per beat ("broad muzzle, blocky head" ×4 is correct
+   by construction, not recitation) — flagging those would return INCONCLUSIVE on every legitimate film.
+3. **DEFINITION-echo** (`definition_echo`, reported caution — NOT a hard block). The fraction of a
+   prompt definition's content words present in a clip's `features` (containment). High
+   (≥0.80) means the description **tracks the CANNED definition, not the specific image** — the failure
+   that clip-vs-clip echo misses: it fires whether or not two clips recite the SAME definition. Measured
+   on the wolf run, the ACCEPTED wolves recited the wolf definition at **0.85–1.0** (one verbatim) while
+   the rejected coyotes tracked the coyote definition at 0.67 — i.e. the acceptances were the MORE
+   recited. Because a real animal legitimately matches its own definition, this is **reported per clip
+   (and per accepted winner), never auto-blocking**: it tells you how much to trust a PASS, not whether
+   to run. A PASS built on definition-echoed acceptances is surfaced with a loud caveat.
 
 ## Calibration doctrine — two-sided, both axes, 3-frame, permanent fixtures
 - Fixtures are **3-frame sets** (`tests/fixtures/vision/<name>/`, 25/50/75% like production), not single
