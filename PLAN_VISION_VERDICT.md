@@ -12,6 +12,21 @@ report its real epistemic state, and make a POLICY (a value I can dial) decide w
 All prior amendments stand (4,000 Music-credit ceiling; two-stage run; per-beat requiredness). No Stage-1
 run until the gate is calibrated both directions.
 
+## ADDITION — the "THE GATE IS RIGHT" outcome path (this plan must NOT assume over-strictness)
+There are THREE worlds, and adjudication decides which:
+- **(A) Gate over-strict on SPECIES** — clear wolves are being called not-wolf by the "say false when
+  unsure" push. Fix = the three-way shape below (§1–2); a confirmed wolf then reads `clear_match`.
+- **(B) Gate correct, footage CAPTIVE** — the clips are park/habituated animals, not wild. Wolves are
+  among the most camera-shy large predators; genuinely wild footage is hard and costly, and a tight
+  close-up of a wolf is itself evidence of captivity. Then SPECIES may be `clear_match` while WILD is
+  correctly `clear_mismatch` — nothing to tune. The **feasibility probe reporting INFEASIBLE on
+  subject×WILD-availability is a LEGITIMATE, valuable result**, not a failure: free stock cannot supply a
+  *wild* wolf documentary → the A/B/C fork (paid wildlife stock / change subject / change season), NOT
+  loosen-the-gate. Build this branch explicitly: the Stage-1 decision names a WILD-dominant scarcity as
+  "wild footage infeasible", distinct from a re-brief, and the feasibility probe can terminate INFEASIBLE.
+- **(C) Genuinely ambiguous animal** — coyote/wolf boundary (the fence): `uncertain`, handled by policy.
+"Loosen until wolves pass" is NOT the only acceptable ending; a true INFEASIBLE is a real finding.
+
 ## 1. THREE-WAY SPECIES VERDICT (keep the feature-first reasoning that works)
 The vision JSON keeps `species_features` FIRST (the reasoning that already produces good descriptions),
 then reports **`species: "clear_match" | "uncertain" | "clear_mismatch"`** instead of a boolean. Prompt
@@ -52,11 +67,18 @@ The model already emits `species_features` beside the verdict. Add a structured 
 Once Banks confirms ground truth on the three frames:
 - The **confirmed wolf → `clear_match` on all 5 runs** AND the **coyote → `clear_mismatch` on all 5**.
   BOTH, or the gate is not calibrated (a one-sided pass proves nothing).
+- **SPECIES and WILD are calibrated with SEPARATE fixtures** (they are independent axes — prove it in
+  practice, not just in the prompt). The most useful positive-species fixture is a **clear wolf in an
+  enclosure** = `species: clear_match` / `wild: clear_mismatch`: it validates species WITHOUT needing
+  scarce wild footage, and proves the axes move independently. A frame that fails BOTH proves nothing
+  about independence. Fixture matrix: clear-wolf-captive (species✓/wild✗), coyote (species✗), a genuinely
+  WILD non-wolf if available (wild✓/species✗ e.g. the lion in savanna), the ambiguous fence (`uncertain`).
 - **Rebuild ALL fixtures as 3-frame sets** (`tests/fixtures/vision/<name>/{0,1,2}.jpg`, sampled 25/50/75%
   like production) so the calibration measures the production path, not a single frame. Re-extract
   coyote/fence/lion; add the confirmed wolf. `verify_vision_fixtures` + `measure_vision_variance` load the
-  triples. If a confirmed wolf still won't reliably `clear_match`, the gate is still too strict → revisit
-  §1 (not by re-tightening wording).
+  triples. If a confirmed CLEAR wolf still won't reliably `clear_match`, the gate is still too strict →
+  revisit §1 (NOT by re-tightening wording). If it `clear_match`es on species but `clear_mismatch`es on
+  wild, that is world (B) — not a bug.
 
 ## 5. LEDGER GAP — calibration/dev spend must be tracked too
 `verify_vision_fixtures`, `measure_vision_variance`, `source_wolf_fixture` each build a `ListUsageSink`
