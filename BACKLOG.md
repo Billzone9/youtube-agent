@@ -43,6 +43,21 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## Vision gate — hardening (from the wolf Stage-1 gate work, 2026-07-31)
+- `[ ]` **VISION GATE IS NOT CHANNEL-GENERAL — fix before the SECOND subject (BLOCKER for subject #2).**
+  `ytagent/sourcing/vision.py` hardcodes grey-wolf/coyote morphology in `_PROMPT_DEFINITIONS` **and** in
+  the `_SYSTEM` prompt's examples. On an elephant or eagle film the gate is primed with canid examples,
+  and `definition_echo` compares features against irrelevant (wolf/coyote) definitions → meaningless
+  numbers. Violates "general platform, not a niche tool — channel-general from slice 1" (CLAUDE.md /
+  ROADMAP). Fix: species definitions become **per-subject DATA derived from the brief** (the expected
+  subject + its confusable look-alikes), not constants in code/prompt. Wildlife-general, not wolf-specific.
+- `[ ]` **Consider REMOVING species definitions from the prompt entirely (candidate real fix for
+  definition-echo).** The model can only RECITE because we handed it the script. If `_SYSTEM` asked it to
+  describe what it SEES without supplying morphology definitions, there'd be no canned text to echo —
+  possibly the real fix rather than measuring recitation after the fact. **Do not act yet:** the def-echo
+  numbers on the ACCEPTED winners from the clean wolf Stage-1 run are the evidence for/against this;
+  decide once that data is in.
+
 ## Phase 1 enablers (promote to ROADMAP when we start them)
 - `[ ]` Build asset-provenance logging into the production pipeline (URL + contributor + license
   + timestamp per clip). Required by the footage-recon findings.
