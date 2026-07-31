@@ -42,7 +42,7 @@ def usage_to_gbp(usage: TokenUsage, model: str, pricing: dict) -> dict:
     ) / _PER_MILLION
 
     amount_usd = usd.quantize(Decimal("0.000001"))
-    amount_gbp = (amount_usd * fx_rate).quantize(Decimal("0.01"))
+    amount_gbp = (amount_usd * fx_rate).quantize(Decimal("0.0001"))   # sub-penny (see migration 0007)
     return {
         "amount_gbp": amount_gbp,
         "amount_usd": amount_usd,

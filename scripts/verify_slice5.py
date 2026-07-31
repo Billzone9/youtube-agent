@@ -146,9 +146,10 @@ async def run() -> None:
                           request_id="verify-slice5-costtest", channel_id=channel["id"])
         try:
             res = await repo.ledger.write_llm_cost(conn, rec, pricing)
-            # sonnet $3/M in, $15/M out: (100000*3 + 20000*15)/1e6 = 0.6 USD; ×0.79 = 0.474 → £0.47
+            # sonnet $3/M in, $15/M out: (100000*3 + 20000*15)/1e6 = 0.6 USD; ×0.79 = 0.474 → £0.4740
+            # (4dp sub-penny precision since migration 0007 — small calls no longer round to the penny)
             check("USD computed correctly", res["amount_usd"] == Decimal("0.600000"), str(res["amount_usd"]))
-            check("GBP computed correctly", res["amount_gbp"] == Decimal("0.47"), str(res["amount_gbp"]))
+            check("GBP computed correctly", res["amount_gbp"] == Decimal("0.4740"), str(res["amount_gbp"]))
             row = res["row"]
             check("ledger row is ai_generation / Anthropic", row["category"] == "ai_generation"
                   and row["provider"] == "Anthropic")

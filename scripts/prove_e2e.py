@@ -111,58 +111,60 @@ async def stage1(conn, settings):
         length_of=lambda b: lengths[b.index], required_of=_required_axes)
     await produce._drain_llm(conn, sink, pricing, channel_id=channel["id"], job_id=job["id"])
 
-    _SCARCITY = ("species", "wild", "season")
     _INCIDENTAL = ("habitat", "time_of_day")
-    short_scarcity, short_incidental = 0, 0
+    short = {"wild": 0, "species": 0, "season": 0, "incidental": 0}
+    total_contradictions = 0
     for r in report:
         mark = "✅ PASS" if r["reached_min"] else "❌ NEEDS WORK"
-        print(f"beat{r['beat']} '{r['label']}' — {mark}: {r['verified']} verified / {r['n_min']} min "
-              f"(target {r['n_target']}, {r['narration_s']}s)  [BLOCKING: species, wild, "
-              f"{', '.join(r['required_axes'])}]")
-
-        # accepted winners — and how often a winner was OFF on an ADVISORY (unlocked) axis
-        adv = {"habitat": 0, "time": 0}
-        for v in r["verdicts"]:
-            if v["ok"]:
-                if v.get("habitat") is False:
-                    adv["habitat"] += 1
-                if v.get("time") is False:
-                    adv["time"] += 1
+        total_contradictions += r.get("contradictions", 0)
+        print(f"beat{r['beat']} '{r['label']}' — {mark}: {r['verified']} verified "
+              f"({r.get('clear', 0)} clear + {len(r.get('uncertain_used', []))} uncertain-used) / "
+              f"{r['n_min']} min (target {r['n_target']}, {r['narration_s']}s)  "
+              f"[BLOCKING: species, wild, {', '.join(r['required_axes'])}]")
         for a in r["accepted"]:
-            print(f"    ✓ {a['asset_id']}  {a['url']}")
-        if r["accepted"] and (adv["habitat"] or adv["time"]):
-            print(f"    (accepted winners off on an advisory axis: habitat×{adv['habitat']}, time×{adv['time']})")
+            u = " (UNCERTAIN)" if a["asset_id"] in r.get("uncertain_used", []) else ""
+            print(f"    ✓ {a['asset_id']}{u}  {a['url']}")
+        if r.get("contradictions"):
+            print(f"    ⚠ {r['contradictions']} evidence↔verdict CONTRADICTION(S) — gate may be miscalibrated")
 
-        # per-axis rejection breakdown for THIS beat → its dominant failure axis
+        # rejection breakdown for THIS beat → its dominant reject driver
         beat_tally = {}
         for v in r["verdicts"]:
-            if not v["ok"]:
-                for ax in (v.get("failed_axes") or []):
+            if v.get("category") == "reject":
+                for ax in (v.get("drivers") or []):
                     beat_tally[ax] = beat_tally.get(ax, 0) + 1
-                print(f"    ✗ {v['asset_id']} — failed {','.join(v.get('failed_axes') or [])}: {v['reason'][:100]}")
+                print(f"    ✗ {v['asset_id']} [{','.join(v.get('drivers') or [])}] "
+                      f"species={v.get('species')} wild={v.get('wild')}: {v['reason'][:90]}")
         if beat_tally:
-            print(f"    rejection breakdown: " + ", ".join(f"{k}×{n}" for k, n in sorted(beat_tally.items())))
+            print(f"    reject breakdown: " + ", ".join(f"{k}×{n}" for k, n in sorted(beat_tally.items())))
         if not r["reached_min"]:
             dominant = max(beat_tally, key=beat_tally.get) if beat_tally else "none"
-            kind = "SCARCITY" if dominant in _SCARCITY else ("INCIDENTAL" if dominant in _INCIDENTAL else "?")
-            if dominant in _SCARCITY:
-                short_scarcity += 1
-            elif dominant in _INCIDENTAL:
-                short_incidental += 1
-            print(f"    → SHORT — dominant failure axis: {dominant} ({kind}); {r['reason']}")
+            bucket = "incidental" if dominant in _INCIDENTAL else dominant
+            if bucket in short:
+                short[bucket] += 1
+            print(f"    → SHORT — dominant reject axis: {dominant}; {r['reason']}")
 
-    # SPECIFY-2 decision rule, computed PER SHORT BEAT (not aggregated over successful beats):
-    if short_scarcity == 0 and short_incidental == 0:
+    # Decision rule (per short beat) with the world-(B) INFEASIBLE-WILD branch made explicit:
+    n_short = sum(short.values())
+    if total_contradictions > 0:
+        verdict = (f"INCONCLUSIVE — {total_contradictions} evidence↔verdict contradiction(s): the gate is "
+                   "fighting its own evidence. Recalibrate before trusting ANY scarcity conclusion.")
+    elif n_short == 0:
         verdict = "PASS — every beat reached n_min. Ready for Stage 2 on your go."
-    elif short_scarcity >= 1:
-        verdict = (f"FAIL — {short_scarcity} short beat(s) dominated by subject×season scarcity "
-                   "(species/wild/season). A scarcity beat can't be re-briefed → the A/B/C fork.")
+    elif short["wild"] >= 1 and short["wild"] >= short["species"] + short["season"]:
+        verdict = (f"INFEASIBLE (WILD) — {short['wild']} short beat(s) dominated by the WILD axis: free "
+                   "stock supplies this subject but only CAPTIVE/park footage. No gate tuning fixes a real "
+                   "absence → the A/B/C fork (paid wildlife stock / change subject or season). A legitimate result.")
+    elif short["species"] + short["season"] >= 1 and short["incidental"] == 0:
+        verdict = (f"FAIL (scarcity) — short beat(s) dominated by species/season scarcity. The subject×"
+                   "season isn't in free stock → the A/B/C fork.")
     else:
-        verdict = (f"MARGINAL — {short_incidental} short beat(s) dominated by an INCIDENTAL axis "
+        verdict = (f"MARGINAL — {short['incidental']} short beat(s) dominated by an INCIDENTAL axis "
                    "(habitat/time lock). Re-brief/relax those beats; don't change the subject.")
     bud = await budget_status(conn)
     print(f"\nStage-1 decision: {verdict}")
-    print(f"short beats: {short_scarcity} scarcity-dominant, {short_incidental} incidental-dominant")
+    print(f"short beats by dominant axis: {dict((k, v) for k, v in short.items() if v)}  "
+          f"| contradictions: {total_contradictions}")
     print(f"spend this run: LLM (Haiku query+vision) only; month-to-date £{bud['month_spend_gbp']:.2f} "
           f"/ £{bud['ceiling_gbp']:.0f} ({bud['tier']}). No Music spent.")
 

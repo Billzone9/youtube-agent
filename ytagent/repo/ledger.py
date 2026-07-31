@@ -33,12 +33,15 @@ async def get_llm_pricing(conn) -> dict:
     return row["value"] if row else {}
 
 
-async def write_llm_cost(conn, rec, pricing: dict, *, reconciled: bool = True) -> dict:
+async def write_llm_cost(conn, rec, pricing: dict, *, reconciled: bool = True,
+                         context: str = "production") -> dict:
     """Write one Anthropic call's real token spend to cost_ledger (category 'ai_generation').
 
     Idempotent on `llm:{request_id}` (plain-unique index; a replay upserts, never duplicates). USD is
     stored in amount_original/currency; amount_gbp is the FX-converted figure the budget view sums.
     `rec` is a providers.base.UsageRecord; `pricing` is the platform_settings llm_pricing dict.
+    `context` tags the spend ('production' | 'calibration' | 'dev') so build/calibration cost is
+    distinguishable from production cost in every report and ROI figure.
     """
     from ..providers.pricing import usage_to_gbp
 
@@ -46,7 +49,7 @@ async def write_llm_cost(conn, rec, pricing: dict, *, reconciled: bool = True) -
     fx_date = ((pricing.get("fx") or {}).get("as_of"))
     tier = rec.tier.value if hasattr(rec.tier, "value") else str(rec.tier)
     meta = {
-        "model": rec.model, "tier": tier, "purpose": rec.purpose,
+        "model": rec.model, "tier": tier, "purpose": rec.purpose, "context": context,
         "input_tokens": rec.usage.input_tokens, "output_tokens": rec.usage.output_tokens,
         "cache_read_input_tokens": rec.usage.cache_read_input_tokens,
         "cache_creation_input_tokens": rec.usage.cache_creation_input_tokens,
@@ -70,6 +73,17 @@ async def write_llm_cost(conn, rec, pricing: dict, *, reconciled: bool = True) -
     )
     row = await cur.fetchone()
     return {"row": row, "amount_gbp": calc["amount_gbp"], "amount_usd": calc["amount_usd"]}
+
+
+async def drain_dev_usage(conn, sink, pricing: dict, *, context: str = "calibration") -> float:
+    """Drain a UsageSink to the ledger tagged `context` (calibration/dev), NOT production. Every script
+    that makes live LLM calls should call this in a finally, so the money spent BUILDING the platform is
+    tracked too. Returns total GBP written. Records carry no channel/job (dev work isn't a channel's cost)."""
+    total = 0.0
+    for rec in sink.drain():
+        res = await write_llm_cost(conn, rec, pricing, reconciled=False, context=context)
+        total += float(res["amount_gbp"])
+    return round(total, 4)
 
 
 async def write_tts_cost(conn, *, channel_id: int, job_id: int | None, beat_name: str,

@@ -17,11 +17,12 @@ from ytagent.sourcing import source_clips_for_brief
 from ytagent.sourcing.base import Candidate, QueryPlan
 from ytagent.sourcing.query import build_query_plan, derive_axis_locks
 from ytagent.sourcing.rank import score_candidate
-from ytagent.sourcing.vision import Expect, VisionUnavailable, vision_check
+from ytagent.sourcing.vision import (CLEAR_MATCH, CLEAR_MISMATCH, UNCERTAIN, Expect, VisionUnavailable,
+                                     classify, vision_check)
 
 PASS, FAIL = "✅", "❌"
 _failures = 0
-_FRAME = "tests/fixtures/vision/fail_fence.jpg"   # any real jpg — content ignored by the fake LLM
+_FRAME = "tests/fixtures/vision/fence/vf_0.jpg"   # any real jpg — content ignored by the fake LLM
 
 
 def check(label, ok, detail=""):
@@ -40,9 +41,11 @@ class _FakeVisionLLM:
         return LLMResponse(text=self._v, model="fake-haiku", usage=TokenUsage(), request_id="r")
 
 
-def _v(species=True, wild=True, season=True, habitat=True, time=True):
-    j = {"species_ok": species, "wild": wild, "season_ok": season, "habitat_ok": habitat, "time_ok": time}
-    return "{" + ", ".join(f'"{k}": {str(x).lower()}' for k, x in j.items()) + ', "reason": "test"}'
+def _v(species=CLEAR_MATCH, wild=CLEAR_MATCH, season=True, habitat=True, time=True, indicate="grey wolf"):
+    import json
+    return json.dumps({"species_features": "broad muzzle, blocky head, heavy frame",
+                       "features_indicate": indicate, "species": species, "wild": wild,
+                       "season_ok": season, "habitat_ok": habitat, "time_ok": time, "reason": "test"})
 
 
 def main():
@@ -71,23 +74,31 @@ def main():
           score(("wolf", "sanctuary", "snow"))[0] > 0.45)
     check("FARM no longer disqualified", score(("wolf", "farm", "snow"))[0] > 0.45)
 
-    print("[4] per-axis vision verdict — season blocks, habitat/time advisory unless required")
+    print("[4] three-way verdict → POLICY category (clear/uncertain/reject)")
     wolf = Expect(subject="grey wolf", season=("snow",), habitat=("forest",), time_of_day=("dusk",),
                   required=frozenset({"season"}))
     wolf_dusk = Expect(subject="grey wolf", season=("snow",), time_of_day=("dusk",),
                        required=frozenset({"season", "time_of_day"}))
     cases = [
-        ("all axes pass → accept", wolf, _v(), True),
-        ("wrong species → reject", wolf, _v(species=False), False),
-        ("captive → reject", wolf, _v(wild=False), False),
-        ("wrong season (required) → reject", wolf, _v(season=False), False),
-        ("wrong HABITAT but habitat advisory → accept (incidental)", wolf, _v(habitat=False), True),
-        ("wrong TIME but time advisory → accept (incidental)", wolf, _v(time=False), True),
-        ("wrong TIME when time is a PER-BEAT lock → reject", wolf_dusk, _v(time=False), False),
+        ("all clear_match → clear/accept", wolf, _v(), "clear"),
+        ("species clear_mismatch → reject", wolf, _v(species=CLEAR_MISMATCH, indicate="coyote"), "reject"),
+        ("species UNCERTAIN → uncertain (reserve)", wolf, _v(species=UNCERTAIN, indicate="wolf or coyote"), "uncertain"),
+        ("wild clear_mismatch (captive) → reject", wolf, _v(wild=CLEAR_MISMATCH), "reject"),
+        ("wrong season (required) → reject", wolf, _v(season=False), "reject"),
+        ("HABITAT mismatch but advisory → clear", wolf, _v(habitat=False), "clear"),
+        ("TIME mismatch but advisory → clear", wolf, _v(time=False), "clear"),
+        ("TIME mismatch when time is a PER-BEAT lock → reject", wolf_dusk, _v(time=False), "reject"),
     ]
     for label, expect, verdict, want in cases:
         vd = vision_check([_FRAME], expect=expect, llm=_FakeVisionLLM(verdict))
-        check(label, vd.overall_ok is want, f"overall={vd.overall_ok} failed={vd.failed_axes}")
+        cat = classify(vd, expect)
+        check(label, cat[0] == want, f"category={cat}")
+
+    print("[4b] evidence↔verdict CONTRADICTION detected")
+    vd = vision_check([_FRAME], expect=wolf, llm=_FakeVisionLLM(_v(species=CLEAR_MISMATCH, indicate="grey wolf")))
+    check("features say wolf but verdict rejects → contradiction=True", vd.contradiction is True)
+    vd2 = vision_check([_FRAME], expect=wolf, llm=_FakeVisionLLM(_v(species=CLEAR_MATCH, indicate="grey wolf")))
+    check("features say wolf and verdict accepts → contradiction=False", vd2.contradiction is False)
 
     print("[5] Item 6 — vision gate FAILS LOUD when required but no LLM")
     async def _no_llm():

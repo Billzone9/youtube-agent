@@ -154,12 +154,14 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
         conn, providers, plan, channel_id=channel_id, target_w=target_w, target_h=target_h,
         negative_terms=negative_terms)
 
-    winners: list[SourcedAsset] = []
+    clear: list[SourcedAsset] = []                          # clear_match on every required axis → accept
+    reserve: list[SourcedAsset] = []                        # 'uncertain' on an identity axis → held back
     verdicts: list[dict] = []
     taken: set[tuple[str, str]] = set()
-    attempts, max_attempts = 0, n_target * 3 + 10           # vision rejects more, so allow more attempts
+    contradictions = 0
+    attempts, max_attempts = 0, n_target * 3 + 10           # the gate rejects some, so allow more attempts
     for score, cand, _ in eligible:
-        if len(winners) >= n_target or attempts >= max_attempts:
+        if len(clear) >= n_target or attempts >= max_attempts:
             break
         key = (cand.source, cand.asset_id)
         if key in exclude or key in taken:                   # no-repeat: video-wide + within-beat
@@ -171,41 +173,68 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                                orientation=plan.orientation)
         if asset is None:
             continue
-        if vision and llm is not None:                       # CONTENT check — species / wild / season
+        category = "clear"
+        if vision and llm is not None:                       # CONTENT check — three-way identity + setting
             with tempfile.TemporaryDirectory(prefix="vgate-") as vd:
                 frames = _vision.sample_frames(asset.local_path, vd)
                 v = _vision.vision_check(frames, expect=expect, llm=llm,
                                          channel_id=channel_id, job_id=job_id)
-            rec = {"asset_id": cand.asset_id, "url": cand.page_url, "ok": v.overall_ok,
-                   "species": v.species_ok, "wild": v.wild_ok, "season": v.season_ok,
-                   "habitat": v.habitat_ok, "time": v.time_ok, "failed_axes": list(v.failed_axes),
-                   "reason": v.reason}
+            category, drivers = _vision.classify(v, expect)
+            rec = {"asset_id": cand.asset_id, "url": cand.page_url, "category": category,
+                   "species": v.species, "wild": v.wild, "season": v.season_ok, "habitat": v.habitat_ok,
+                   "time": v.time_ok, "drivers": list(drivers), "contradiction": v.contradiction,
+                   "used": False, "reason": v.reason}
             verdicts.append(rec)
             if collect_verdicts is not None:
                 collect_verdicts.append(rec)
-            if not v.overall_ok:
+            if v.contradiction:                              # gate fighting its own evidence — loud + counted
+                contradictions += 1
+                await record_event(conn, "sourcing.vision_contradiction",
+                                   message=f"{brief_ref} ⚠ {cand.source}:{cand.asset_id} — features "
+                                           f"'{v.features_indicate}' vs species={v.species}: {v.reason}",
+                                   channel_id=channel_id, job_id=job_id, data={"verdict": rec})
+            if category == "reject":
                 await record_event(conn, "sourcing.vision_reject",
                                    message=f"{brief_ref} ✗ {cand.source}:{cand.asset_id} — "
-                                           f"failed {','.join(v.failed_axes)}: {v.reason}",
-                                   channel_id=channel_id, job_id=job_id,
-                                   data={"url": cand.page_url, "verdict": verdicts[-1]})
+                                           f"{','.join(drivers)}: {v.reason}",
+                                   channel_id=channel_id, job_id=job_id, data={"verdict": rec})
                 continue
-        winners.append(asset)
+        (clear if category == "clear" else reserve).append(asset)
         taken.add(key)
+
+    # POLICY: fill from CLEAR first; draw the UNCERTAIN reserve ONLY to reach n_min, flagging each used.
+    winners = clear[:n_target]
+    uncertain_used: list[str] = []
+    if len(winners) < n_min:
+        for asset in reserve:
+            if len(winners) >= n_min:
+                break
+            winners.append(asset)
+            uncertain_used.append(asset.asset_id)
+    used_ids = {w.asset_id for w in winners}
+    for rec in verdicts:                                     # mark which verdicts became winners
+        rec["used"] = rec["asset_id"] in used_ids
 
     if len(winners) >= n_min:
         await record_event(conn, "sourcing.beat_sourced",
-                           message=f"{brief_ref}: {len(winners)} verified clips (min {n_min}, target {n_target})",
+                           message=f"{brief_ref}: {len(winners)} clips ({len(clear)} clear, "
+                                   f"{len(uncertain_used)} uncertain-used; min {n_min}, target {n_target}; "
+                                   f"{contradictions} contradiction(s))",
                            channel_id=channel_id, job_id=job_id,
-                           data={"asset_ids": [w.asset_id for w in winners], "verdicts": verdicts})
+                           data={"asset_ids": [w.asset_id for w in winners],
+                                 "uncertain_used": uncertain_used, "contradictions": contradictions,
+                                 "verdicts": verdicts})
         return winners
-    rejected = sum(1 for v in verdicts if not v["ok"])
-    reason = (f"only {len(winners)} verified clips (need ≥{n_min}) — "
+    n_reject = sum(1 for v in verdicts if v["category"] == "reject")
+    n_unc = sum(1 for v in verdicts if v["category"] == "uncertain")
+    reason = (f"only {len(clear)} clear + {n_unc} uncertain (need ≥{n_min}) — "
               + ("no candidates" if best == 0.0 else f"best {best:.2f}")
-              + (f", {rejected} failed the vision gate" if rejected else ""))
+              + (f", {n_reject} rejected by the gate" if n_reject else "")
+              + (f", {contradictions} contradiction(s)" if contradictions else ""))
     await record_event(conn, "sourcing.no_match", message=f"{brief_ref}: {reason}",
                        channel_id=channel_id, job_id=job_id,
-                       data={"considered": list(considered), "verdicts": verdicts})
+                       data={"considered": list(considered), "verdicts": verdicts,
+                             "contradictions": contradictions})
     return NoMatch(shot_brief_ref=brief_ref, reason=reason, considered=considered)
 
 
