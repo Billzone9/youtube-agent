@@ -36,6 +36,8 @@ class LLMRequest:
     batch: bool = False                     # dispatch hint (the runner decides; the writer doesn't)
     channel_id: int | None = None
     job_id: int | None = None
+    temperature: float | None = None        # None = omit (safe on Sonnet 4.6/Opus 4.8, which 400 on it);
+    #                                          set 0 for a deterministic gate (accepted on Haiku 4.5)
 
 
 @dataclass(frozen=True)

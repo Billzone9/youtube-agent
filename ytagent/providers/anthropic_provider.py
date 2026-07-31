@@ -60,11 +60,13 @@ class AnthropicProvider:
 
     def complete(self, req: LLMRequest) -> LLMResponse:
         model = self.model_for(req.tier)
+        extra = {} if req.temperature is None else {"temperature": req.temperature}
         resp = self._client.messages.create(
             model=model,
             max_tokens=req.max_tokens,
             system=_system_blocks(req.system),
             messages=list(req.messages),
+            **extra,      # temperature only when explicitly set (omitted → safe on Sonnet 4.6/Opus 4.8)
         )
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
         usage = _usage_from(resp.usage)

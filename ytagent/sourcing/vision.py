@@ -127,14 +127,12 @@ def _expect_text(expect: Expect) -> str:
     return "\n".join(lines)
 
 
-def vision_check(frames: list[str], *, expect: Expect, llm, channel_id=None, job_id=None) -> VisionVerdict:
-    """Haiku-vision verdict for one clip's frames against `expect`, judged PER AXIS. overall_ok =
-    species AND wild AND every axis in `expect.required`. Advisory axes are reported, never block.
-    No LLM or no frames → SKIPPED/pass (only reached via an EXPLICIT vision=False path; the required
-    path fails loud upstream — see orchestrator.source_clips_for_brief / VisionUnavailable)."""
-    if llm is None or not frames:
-        return VisionVerdict(True, True, True, True, reason="vision gate skipped (no LLM/frames)",
-                             skipped=True)
+_SAMPLES = 3   # majority-of-N per axis: temperature=0 alone still flips a borderline SPECIES call ~20%,
+#                and a false 'yes' on species is the worst error, so vote it. Odd N → no ties.
+
+
+def _single_call(frames: list[str], expect: Expect, llm, *, channel_id, job_id) -> dict | None:
+    """One vision call → raw per-axis booleans + reason, or None on an unparseable/malformed reply."""
     from ..providers.base import CacheableBlock, LLMRequest, ModelTier
 
     content: list[dict] = [_image_block(f) for f in frames]
@@ -142,23 +140,45 @@ def vision_check(frames: list[str], *, expect: Expect, llm, channel_id=None, job
     resp = llm.complete(LLMRequest(
         tier=ModelTier.CHEAP, system=(CacheableBlock(_SYSTEM),),
         messages=({"role": "user", "content": content},), max_tokens=450, purpose="vision_gate",
-        channel_id=channel_id, job_id=job_id))
+        channel_id=channel_id, job_id=job_id, temperature=0))    # deterministic-ish; voting covers the rest
     s = resp.text.strip()
     a, b = s.find("{"), s.rfind("}")
     if a == -1 or b == -1:
-        return VisionVerdict(False, False, False, False, failed_axes=("parse",),
-                             reason=f"unparseable verdict: {s[:80]}")
+        return None
     try:
         d = json.loads(s[a:b + 1])
     except Exception:  # noqa: BLE001
-        return VisionVerdict(False, False, False, False, failed_axes=("parse",),
-                             reason=f"malformed verdict JSON: {s[:80]}")
-    species_ok = bool(d.get("species_ok", False))
-    wild_ok = bool(d.get("wild", False))
-    axis_ok = {"season": bool(d.get("season_ok", False)),
-               "habitat": bool(d.get("habitat_ok", True)),
-               "time_of_day": bool(d.get("time_ok", False if "time_ok" in d else True))}
+        return None
+    feat = str(d.get("species_features", "")).strip()
+    reason = str(d.get("reason", "")).strip()
+    return {"species": bool(d.get("species_ok", False)), "wild": bool(d.get("wild", False)),
+            "season": bool(d.get("season_ok", False)), "habitat": bool(d.get("habitat_ok", True)),
+            "time_of_day": bool(d.get("time_ok", True)),
+            "reason": (f"[species: {feat[:120]}] " if feat else "") + reason}
 
+
+def vision_check(frames: list[str], *, expect: Expect, llm, samples: int = _SAMPLES,
+                 channel_id=None, job_id=None) -> VisionVerdict:
+    """Haiku-vision verdict for one clip's frames against `expect`, judged PER AXIS and by MAJORITY of
+    `samples` calls (temperature=0 + majority vote → a borderline species call can't slip through on one
+    lucky roll). overall_ok = species AND wild AND every axis in `expect.required`; advisory axes are
+    reported, never block. No LLM or no frames → SKIPPED/pass (only via an EXPLICIT vision=False path;
+    the required path fails loud upstream — see orchestrator.source_clips_for_brief / VisionUnavailable)."""
+    if llm is None or not frames:
+        return VisionVerdict(True, True, True, True, reason="vision gate skipped (no LLM/frames)",
+                             skipped=True)
+    calls = [c for c in (_single_call(frames, expect, llm, channel_id=channel_id, job_id=job_id)
+                         for _ in range(max(1, samples))) if c is not None]
+    if not calls:
+        return VisionVerdict(False, False, False, False, failed_axes=("parse",),
+                             reason="unparseable/malformed vision verdict(s)")
+
+    def majority(axis: str) -> bool:
+        yes = sum(1 for c in calls if c[axis])
+        return yes > len(calls) / 2
+
+    species_ok, wild_ok = majority("species"), majority("wild")
+    axis_ok = {ax: majority(ax) for ax in _SETTING_AXES}
     failed = []
     if not species_ok:
         failed.append("species")
@@ -167,11 +187,11 @@ def vision_check(frames: list[str], *, expect: Expect, llm, channel_id=None, job
     for axis in _SETTING_AXES:                       # only REQUIRED setting axes can fail the overall
         if axis in expect.required and not axis_ok[axis]:
             failed.append(axis)
-    feat = str(d.get("species_features", "")).strip()
-    reason = str(d.get("reason", "")).strip()
-    if feat:                                          # keep the species reasoning visible in the verdict
-        reason = f"[species: {feat[:120]}] {reason}"
+    # keep a reason from a call that AGREES with the majority species (the decisive axis)
+    reason = next((c["reason"] for c in calls if c["species"] == species_ok), calls[0]["reason"])
+    if len(calls) > 1:
+        reason = f"[{sum(1 for c in calls if c['species'] == species_ok)}/{len(calls)} agree species] " + reason
     return VisionVerdict(
         overall_ok=not failed, species_ok=species_ok, wild_ok=wild_ok,
         season_ok=axis_ok["season"], habitat_ok=axis_ok["habitat"], time_ok=axis_ok["time_of_day"],
-        failed_axes=tuple(failed), reason=reason[:280])
+        failed_axes=tuple(failed), reason=reason[:300])
