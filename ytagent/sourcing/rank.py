@@ -16,12 +16,14 @@ MATCH_THRESHOLD = 0.45   # the must-term SUBJECT filter is the real guard now; t
 #                          penguin's 0.44 beach clips). Subject correctness is enforced separately.
 _W = re.compile(r"[a-z0-9]+")
 
-# Metadata negative filter (free, before download): a clip whose tags/title/slug name a captive or
-# man-made setting is disqualified outright — wildlife must read as WILD (the wolf run served a fenced
-# enclosure clip). The vision gate is the deeper check; this kills the obvious ones cheaply.
-_NEGATIVE_TERMS = frozenset({
-    "fence", "fenced", "zoo", "captive", "captivity", "enclosure", "cage", "caged", "aquarium",
-    "farm", "pet", "leash", "circus", "sanctuary", "rescue", "petting", "corral", "pen",
+# Metadata negative filter (free, before download): only a save-the-download pre-filter now that the
+# vision gate's wild_ok makes the real captivity call — so it lists ONLY UNAMBIGUOUS captivity terms.
+# Dropped (false-negative risk): 'sanctuary','rescue' (land DESIGNATION — reserves hold wild footage),
+# 'farm','corral' (describe land, not the animal), 'pen' (a common ambiguous token). Per-channel
+# configurable (channel.config.negative_terms); this is the conservative default.
+DEFAULT_NEGATIVE_TERMS = frozenset({
+    "zoo", "captive", "captivity", "enclosure", "cage", "caged", "aquarium", "fenced", "leash",
+    "circus", "petting", "pet",
 })
 
 
@@ -32,7 +34,8 @@ def _tokens(*texts: str) -> set[str]:
     return out
 
 
-def score_candidate(c: Candidate, plan: QueryPlan, *, target_w: int, target_h: int) -> tuple[float, dict]:
+def score_candidate(c: Candidate, plan: QueryPlan, *, target_w: int, target_h: int,
+                    negative_terms=None) -> tuple[float, dict]:
     query_terms = _tokens(" ".join(plan.queries))
     haystack = _tokens(" ".join(c.tags), c.title, c.slug)   # tags + title + url-slug — NOT contributor
 
@@ -42,8 +45,9 @@ def score_candidate(c: Candidate, plan: QueryPlan, *, target_w: int, target_h: i
     if must and not (must & haystack):
         return 0.0, {"disqualified": "missing subject term", "must_terms": sorted(must)}
 
-    # Negative-setting filter: a captive/man-made tag disqualifies wildlife footage outright.
-    negs = _NEGATIVE_TERMS & haystack
+    # Negative-setting filter: an UNAMBIGUOUS captivity tag disqualifies cheaply (the vision gate makes
+    # the nuanced call). Per-channel list; DEFAULT_NEGATIVE_TERMS when None.
+    negs = (DEFAULT_NEGATIVE_TERMS if negative_terms is None else frozenset(negative_terms)) & haystack
     if negs:
         return 0.0, {"disqualified": "captive/man-made setting", "negative_terms": sorted(negs)}
 
@@ -67,11 +71,12 @@ def score_candidate(c: Candidate, plan: QueryPlan, *, target_w: int, target_h: i
                    "matched_terms": sorted(query_terms & haystack)}
 
 
-def rank_candidates(cands: list[Candidate], plan: QueryPlan, *, target_w: int, target_h: int
-                    ) -> list[tuple[float, Candidate, dict]]:
+def rank_candidates(cands: list[Candidate], plan: QueryPlan, *, target_w: int, target_h: int,
+                    negative_terms=None) -> list[tuple[float, Candidate, dict]]:
     scored: list[tuple[float, Candidate, dict]] = []
     for c in cands:
-        s, breakdown = score_candidate(c, plan, target_w=target_w, target_h=target_h)
+        s, breakdown = score_candidate(c, plan, target_w=target_w, target_h=target_h,
+                                       negative_terms=negative_terms)
         scored.append((s, c, breakdown))
     # sort by score desc; tie-break: higher resolution, then longer duration
     scored.sort(key=lambda t: (t[0], t[1].width * t[1].height, t[1].duration or 0.0), reverse=True)

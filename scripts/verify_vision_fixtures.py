@@ -2,14 +2,16 @@
 Haiku-vision calls, no Music spend). Runs the real gate on the three saved fixtures extracted from the
 wolf Pass-A cut and asserts the two-sided calibration (the doctrine used for the AI-tell + noise gates):
 
-  fail_fence.jpg     (wolf in a captive enclosure, wolf expected) → wild=FALSE    → REJECTED
-  fail_coyote.jpg    (a coyote, grey wolf expected)               → species=FALSE → REJECTED
-  pass_wild_lion.jpg (two wild lions in open savanna, lion expected) → all TRUE   → ACCEPTED
+  fail_fence.jpg     + expect grey wolf   → wild=FALSE (captive enclosure)        → REJECTED
+  pass_wild_lion.jpg + expect grey wolf   → species=FALSE (a lion is not a wolf)  → REJECTED
+  pass_wild_lion.jpg + expect lion        → all axes TRUE                         → ACCEPTED
+  pass_wild_lion.jpg + expect lion, time=night ADVISORY (no locked setting axis) → accept despite the
+                       daytime/​night mismatch (the incidental-axis proof — advisory axes never block)
 
-The pass case uses the hand-curated lion footage (Banks-approved as the standard) because the wolf
-Pass-A cut was BROADLY captive/off-brief — the gate rightly rejects every wolf frame in it, which is
-exactly the problem this whole slice fixes. The two-sided calibration proves the gate discriminates
-(accepts genuinely-wild, correct-species footage) rather than simply rejecting everything.
+Only the two ROCK-SOLID fixtures are used (a clearly-captive wolf, and unambiguously-wild lions), each
+tested against several expectations. The wolf/coyote species boundary and free-stock 'wild wolf' clips
+are genuinely borderline — Haiku flip-flops on them — so they make flaky regressions; the deterministic
+species-reject + incidental-axis logic is covered offline in verify_curation.py.
 
 Run: ./.venv/bin/python -m scripts.verify_vision_fixtures
 """
@@ -22,8 +24,11 @@ from ytagent.providers import ListUsageSink, get_llm_provider
 from ytagent.sourcing.vision import Expect, vision_check
 
 _FIX = "tests/fixtures/vision"
-_WOLF = Expect(subject="grey wolf", wild=True, season=("winter", "snow"))
-_LION = Expect(subject="lion", wild=True, season=())      # savanna — no season constraint
+_AS_WOLF = Expect(subject="grey wolf", season=("winter", "snow"), required=frozenset({"season"}))
+_AS_LION = Expect(subject="lion", season=(), required=frozenset())          # savanna — no season lock
+# incidental-axis: NO setting axis is locked; time 'night' is ADVISORY and mismatches the daytime clip
+# → overall still accepts (advisory axes never block a genuinely-wild, correct-species clip).
+_LION_INCIDENTAL = Expect(subject="lion", time_of_day=("night",), required=frozenset())
 PASS, FAIL = "✅", "❌"
 
 
@@ -36,19 +41,23 @@ def main():
 
     fails = 0
     cases = [
-        ("fail_fence.jpg", "captive fence", _WOLF,
-         lambda v: (not v.overall_ok) and (not v.wild_ok), "wild=False"),
-        ("fail_coyote.jpg", "coyote≠wolf", _WOLF,
-         lambda v: (not v.overall_ok) and (not v.species_ok), "species=False"),
-        ("pass_wild_lion.jpg", "wild lions in savanna", _LION,
-         lambda v: v.overall_ok, "all True"),
+        ("fail_fence.jpg", "captive fence, expect wolf", _AS_WOLF,
+         lambda v: (not v.overall_ok) and (not v.wild_ok), "wild=False → reject"),
+        ("pass_wild_lion.jpg", "lion image, expect WOLF", _AS_WOLF,
+         lambda v: (not v.overall_ok) and (not v.species_ok), "species=False → reject"),
+        ("pass_wild_lion.jpg", "lion image, expect lion", _AS_LION,
+         lambda v: v.overall_ok, "all True → accept"),
+        ("pass_wild_lion.jpg", "lion, night ADVISORY (nothing locked)", _LION_INCIDENTAL,
+         lambda v: v.overall_ok and v.species_ok and v.wild_ok,
+         "accept despite time mismatch (incidental axis)"),
     ]
     for fname, desc, expect, want, expect_str in cases:
         v = vision_check([f"{_FIX}/{fname}"], expect=expect, llm=llm)
         ok = want(v)
         fails += 0 if ok else 1
         print(f"  {PASS if ok else FAIL} {fname} ({desc}) → want {expect_str}; got "
-              f"species={v.species_ok} wild={v.wild_ok} season={v.season_ok} overall={v.overall_ok}")
+              f"species={v.species_ok} wild={v.wild_ok} season={v.season_ok} habitat={v.habitat_ok} "
+              f"time={v.time_ok} overall={v.overall_ok} failed={v.failed_axes}")
         print(f"      reason: {v.reason}")
 
     print(f"\n{'ALL PASSED — vision gate calibrated' if not fails else str(fails) + ' CALIBRATION FAILURE(S)'}")

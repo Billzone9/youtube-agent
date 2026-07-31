@@ -91,10 +91,11 @@ async def _acquire(conn, *, channel_id, job_id, cand: Candidate, score: float, b
     return None
 
 
-async def _rank_eligible(conn, providers, plan, *, channel_id, target_w, target_h):
+async def _rank_eligible(conn, providers, plan, *, channel_id, target_w, target_h, negative_terms=None):
     """Search + rank + threshold. Returns (eligible[(score,cand,bd)], seen, considered_summary)."""
     seen = await _search_all(providers, plan, conn, channel_id)
-    ranked = rank_candidates([c for c, _ in seen.values()], plan, target_w=target_w, target_h=target_h)
+    ranked = rank_candidates([c for c, _ in seen.values()], plan, target_w=target_w, target_h=target_h,
+                             negative_terms=negative_terms)
     considered = tuple((round(s, 3), c.asset_id) for s, c, _ in ranked[:8])
     eligible = [(s, c, bd) for s, c, bd in ranked if s >= MATCH_THRESHOLD]
     best = ranked[0][0] if ranked else 0.0
@@ -132,7 +133,8 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                                  target_fmt: str, target_w: int, target_h: int, cache_dir: str,
                                  channel_id: int, job_id: int | None = None, llm=None,
                                  n_target: int, n_min: int, exclude_ids: set | None = None,
-                                 vision: bool = True, collect_verdicts: list | None = None,
+                                 vision: bool = True, required_axes: frozenset | None = None,
+                                 negative_terms=None, collect_verdicts: list | None = None,
                                  ) -> list[SourcedAsset] | NoMatch:
     """Fill ONE beat with up to `n_target` DISTINCT clean, CONTENT-VERIFIED clips (visual-density
     standard). Walks the eligible list in rank order, skipping `exclude_ids` (video-wide no-repeat) and
@@ -141,11 +143,16 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
     else a `NoMatch` (a beat is NEVER padded with one stretched or off-brief clip)."""
     import tempfile
 
+    if vision and llm is None:            # Item 6 — FAIL LOUD: a silently-skipped content gate is worse
+        raise _vision.VisionUnavailable(  # than none. Only an EXPLICIT vision=False may skip it.
+            "vision gate required but no LLM configured — set ANTHROPIC_API_KEY or pass vision=False.")
+
     exclude = set(exclude_ids or ())
     plan = build_query_plan(brief, approx_seconds=approx_seconds, target_fmt=target_fmt, llm=llm)
-    expect = _vision.Expect.from_plan(plan)
+    expect = _vision.Expect.from_plan(plan, required=required_axes)
     eligible, seen, considered, best = await _rank_eligible(
-        conn, providers, plan, channel_id=channel_id, target_w=target_w, target_h=target_h)
+        conn, providers, plan, channel_id=channel_id, target_w=target_w, target_h=target_h,
+        negative_terms=negative_terms)
 
     winners: list[SourcedAsset] = []
     verdicts: list[dict] = []
@@ -170,14 +177,16 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                 v = _vision.vision_check(frames, expect=expect, llm=llm,
                                          channel_id=channel_id, job_id=job_id)
             rec = {"asset_id": cand.asset_id, "url": cand.page_url, "ok": v.overall_ok,
-                   "species": v.species_ok, "wild": v.wild_ok, "season": v.season_ok, "reason": v.reason}
+                   "species": v.species_ok, "wild": v.wild_ok, "season": v.season_ok,
+                   "habitat": v.habitat_ok, "time": v.time_ok, "failed_axes": list(v.failed_axes),
+                   "reason": v.reason}
             verdicts.append(rec)
             if collect_verdicts is not None:
                 collect_verdicts.append(rec)
             if not v.overall_ok:
                 await record_event(conn, "sourcing.vision_reject",
                                    message=f"{brief_ref} ✗ {cand.source}:{cand.asset_id} — "
-                                           f"species={v.species_ok} wild={v.wild_ok} season={v.season_ok}: {v.reason}",
+                                           f"failed {','.join(v.failed_axes)}: {v.reason}",
                                    channel_id=channel_id, job_id=job_id,
                                    data={"url": cand.page_url, "verdict": verdicts[-1]})
                 continue

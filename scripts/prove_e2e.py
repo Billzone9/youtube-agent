@@ -30,17 +30,32 @@ from ytagent.sourcing import get_stock_providers
 _NARR = "assets/produced/wolf/narration"
 
 # Reconstructed from job 29's beat LABELS (the shot-briefs weren't persisted; the VO mp3s are intact).
-# These steer sourcing only — they never touch the narration.
+# These steer sourcing only — they never touch the narration. The film's SEASON (winter/snow) is a
+# film-level constraint carried on EVERY beat; TIME is locked only where the label names it.
 _BEATS = [
     (1, "Before the pack wakes",
-     "grey wolf pack resting in snowy boreal forest before dawn, wolves lying in snow, misty winter woods"),
+     "grey wolf pack in deep snow in winter boreal forest before dawn, wolves resting in the snow at first light"),
     (2, "A life made for the cold",
-     "grey wolf with thick winter coat walking and trotting through deep snow, wolf in falling snow"),
+     "grey wolf with thick winter coat walking and trotting through deep snow, wolf in falling snow in winter"),
     (3, "Reading the snow",
-     "grey wolf nose to the ground tracking a scent, wolf pack moving single file through deep snow"),
+     "grey wolf nose to the ground tracking a scent in snow, wolf pack moving single file through deep winter snow"),
     (4, "The howl at the edge of dark",
-     "grey wolf howling at dusk, lone wolf silhouette against twilight, wolf in the evening forest"),
+     "grey wolf howling in the snow at dusk in winter, lone wolf silhouette against snowy twilight in the evening"),
 ]
+
+# Per-beat axis requiredness (the Amendment). Season BLOCKS on every beat (film-level winter). Time
+# BLOCKS only where the beat's meaning locks it: beat1 "Before the pack wakes" → dawn; beat4 "edge of
+# dark" → dusk. Habitat stays ADVISORY (the labels don't lock it; the brief only incidentally names
+# forest). Derived here from the reconstructed brief because job 29 did not persist the VO text — the
+# general rule reads the VO; this is the honest wolf-specific stand-in, reported so Banks sees it.
+_TIME_LOCKED = {1, 4}
+
+
+def _required_axes(beat):
+    req = {"season"}
+    if beat.index in _TIME_LOCKED:
+        req.add("time_of_day")
+    return frozenset(req)
 
 
 def _reconstructed_script(lengths):
@@ -76,7 +91,7 @@ async def stage1(conn, settings):
           + f"  (total {sum(lengths.values()):.1f}s)\n")
     report = await produce.curate_report(
         conn, providers, script, channel_id=channel["id"], job_id=job["id"], llm=llm,
-        length_of=lambda b: lengths[b.index])
+        length_of=lambda b: lengths[b.index], required_of=_required_axes)
     await produce._drain_llm(conn, sink, pricing, channel_id=channel["id"], job_id=job["id"])
 
     all_ok = True
@@ -84,17 +99,40 @@ async def stage1(conn, settings):
         mark = "✅ PASS" if r["reached_min"] else "❌ NEEDS WORK"
         all_ok = all_ok and r["reached_min"]
         print(f"beat{r['beat']} '{r['label']}' — {mark}: {r['verified']} verified / {r['n_min']} min "
-              f"(target {r['n_target']}, {r['narration_s']}s)")
+              f"(target {r['n_target']}, {r['narration_s']}s)  [BLOCKING: species, wild, "
+              f"{', '.join(r['required_axes'])}]")
         for a in r["accepted"]:
             print(f"    ✓ {a['asset_id']}  {a['url']}")
+        # per-axis rejection breakdown (the clean-evidence answer): which axis each miss died on
+        axis_tally = {}
         for v in r["verdicts"]:
             if not v["ok"]:
-                print(f"    ✗ {v['asset_id']} — species={v['species']} wild={v['wild']} "
-                      f"season={v['season']}: {v['reason'][:110]}")
+                for ax in (v.get("failed_axes") or []):
+                    axis_tally[ax] = axis_tally.get(ax, 0) + 1
+                print(f"    ✗ {v['asset_id']} — failed {','.join(v.get('failed_axes') or [])}: {v['reason'][:100]}")
+        if axis_tally:
+            print(f"    rejection breakdown: " + ", ".join(f"{k}×{n}" for k, n in sorted(axis_tally.items())))
         if not r["reached_min"]:
             print(f"    → {r['reason']}")
+
+    # SPECIFY-2 decision rule, applied to the numbers
+    short = [r for r in report if not r["reached_min"]]
+    dom = {}
+    for r in report:
+        for v in r["verdicts"]:
+            for ax in (v.get("failed_axes") or []):
+                dom[ax] = dom.get(ax, 0) + 1
+    scarcity = sum(dom.get(a, 0) for a in ("species", "wild", "season"))
+    incidental = sum(dom.get(a, 0) for a in ("habitat", "time_of_day"))
+    if not short:
+        verdict = "PASS — every beat reached n_min. Ready for Stage 2 on your go."
+    elif scarcity >= incidental:
+        verdict = "FAIL — shortfall is subject×season scarcity (species/wild/season dominate). The A/B/C fork."
+    else:
+        verdict = "MARGINAL — shortfall is incidental (habitat/time). Re-brief the short beats, don't change subject."
     bud = await budget_status(conn)
-    print(f"\nStage-1 result: {'ALL BEATS REACHED n_min — ready for Stage 2 on your go' if all_ok else 'SOME BEATS SHORT — curation needs a rethink before Stage 2'}")
+    print(f"\nStage-1 decision: {verdict}")
+    print(f"per-axis totals across all beats: {dict(sorted(dom.items()))}")
     print(f"spend this run: LLM (Haiku query+vision) only; month-to-date £{bud['month_spend_gbp']:.2f} "
           f"/ £{bud['ceiling_gbp']:.0f} ({bud['tier']}). No Music spent.")
 

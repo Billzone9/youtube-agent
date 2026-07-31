@@ -79,6 +79,14 @@ class _EmptyProvider:
     async def search(self, q, *, orientation, min_duration, per_page=15): return []
 
 
+class _FakeLLM:
+    """Satisfies the vision gate's fail-loud (llm present) + query planning (falls back on junk). Never
+    reaches a vision call here — the empty provider yields no candidates to check."""
+    def complete(self, req):
+        from ytagent.providers.base import LLMResponse, TokenUsage
+        return LLMResponse(text="{}", model="fake", usage=TokenUsage(), request_id="r")
+
+
 class _CountingTTS:
     def __init__(self): self.calls = 0
     def name(self): return "fake-tts"
@@ -139,7 +147,7 @@ async def run():
         try:
             await produce.produce_video(
                 conn, StubNotifier(), channel=ch, topic="wolf", providers=[_EmptyProvider()],
-                tts=tts, script_writer=_FakeWriter(), llm_provider=None, usage_sink=_Sink(),
+                tts=tts, script_writer=_FakeWriter(), llm_provider=_FakeLLM(), usage_sink=_Sink(),
                 description_exemplar=None, publisher=DryRunPublisher(), chat_id="0",
                 dst=os.path.join(work, "produced.mp4"), workdir=work)
             check("produce raised ProductionError on NoMatch", False, "did NOT raise")

@@ -58,7 +58,10 @@ class QueryPlan:
     min_seconds: int            # = beat.approx_seconds — DETERMINISTIC
     must_terms: tuple[str, ...] = ()   # the recurring subject term(s) a candidate MUST contain
     subject: str = ""           # the main subject as a short phrase (e.g. 'grey wolf') — vision expect
-    setting: tuple[str, ...] = ()      # season/setting terms (e.g. 'snow', 'winter') — vision expect
+    # setting is SEPARATED into three axes, each judged as its own boolean by the vision gate:
+    season: tuple[str, ...] = ()        # snow/winter/… — ALWAYS a required vision axis
+    habitat: tuple[str, ...] = ()       # forest/tundra/… — required PER-BEAT when the VO locks it
+    time_of_day: tuple[str, ...] = ()   # dawn/dusk/… — required PER-BEAT when the VO locks it
 
 
 @dataclass(frozen=True)

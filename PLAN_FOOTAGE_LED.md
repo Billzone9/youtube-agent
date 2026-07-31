@@ -61,8 +61,15 @@ tunable; sample_n=10 bounds probe cost to ~10 vision calls.
   INFEASIBLE (Y < 12). Free stock genuinely lacks the wild in-season subject; escalate to paid stock or
   change subject/season. No amount of re-briefing fixes a scarcity.
 
-**SPECIFY 3 — vision-cost estimate (stated before the clean Stage 1 is run; estimate-before-spending
-applies to vision calls too).** Computed and reported at the STOP point this turn, before any run.
+**SPECIFY 3 — vision-cost estimate (computed; stated before the clean Stage 1 runs).** Per beat
+`n_target=4`, `max_attempts=n_target×3+10=22` → **worst case 88 vision calls** (4 beats); typical
+~40–70 (fewer if in-season footage is found and n_target=4 is hit early; two axes now advisory means
+more clips PASS, so winners arrive sooner). Each call = 3 frames @512px (~197 img-tok each) + system +
+prompt ≈ **~1,070 input + ~150 output tokens**. Haiku 4.5 $1/$5 per Mtok, FX 0.79:
+- typical ~50 calls ≈ **$0.095 ≈ £0.08** · high ~70 ≈ $0.13 ≈ £0.10 · worst-case 88 ≈ $0.16 ≈ **£0.13**.
+Plus 4 query-plan Haiku calls (~£0.002). **Total ≈ £0.08–0.13; wall-clock ~15–30 min (download-bound,
+sequential).** No Music, no downloads-cost (free stock). Comfortably within budget — the discipline is
+to state it, not that it's large.
 
 
 ## Item 1 — SEPARATE THE AXES
