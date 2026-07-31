@@ -106,19 +106,15 @@ async def curate_report(conn, providers, script, *, channel_id, job_id=None, llm
         used |= {(a.source, a.asset_id) for a in got}
         uncertain_used = [v["asset_id"] for v in verdicts
                           if v.get("used") and v.get("category") == "uncertain"]
-        from .sourcing.vision import _DEF_ECHO_THRESHOLD, detect_echo
+        from .sourcing.vision import detect_echo
         echo_pairs = detect_echo([(v["asset_id"], v.get("features", ""), v.get("species")) for v in verdicts])
-        # definition-echo on the WINNERS (the clips the film would be built from) is the number that matters
-        won = {a.asset_id for a in got}
-        winners_def_echoed = [v["asset_id"] for v in verdicts
-                              if v["asset_id"] in won and v.get("def_echo", 0) >= _DEF_ECHO_THRESHOLD]
         report.append({"beat": b.index, "label": b.label, "narration_s": round(hint, 1),
                        "required_axes": sorted(required) if required else ["season"],
                        "n_min": n_min, "n_target": n_tgt, "verified": len(got),
                        "clear": len([v for v in verdicts if v.get("category") == "clear"]),
                        "uncertain_used": uncertain_used,
                        "contradictions": sum(1 for v in verdicts if v.get("contradiction")),
-                       "echo_pairs": echo_pairs, "winners_def_echoed": winners_def_echoed,
+                       "echo_pairs": echo_pairs,
                        "reached_min": len(got) >= n_min,
                        "accepted": [{"asset_id": a.asset_id, "url": a.candidate.page_url} for a in got],
                        "verdicts": verdicts,

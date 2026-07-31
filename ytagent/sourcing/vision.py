@@ -63,42 +63,53 @@ class VisionVerdict:
     # IDENTITY axes are THREE-WAY (the model reports its epistemic state; POLICY decides what it costs):
     species: str = UNCERTAIN            # clear_match | uncertain | clear_mismatch (vs expected subject)
     wild: str = UNCERTAIN              # clear_match(=wild) | uncertain | clear_mismatch(=captive)
-    # SETTING axes stay boolean (binary against named terms):
+    # SETTING axes: the model OBSERVES free labels; season_ok/habitat_ok/time_ok are computed in code vs
+    # the expectation (or True when nothing is expected — the exploratory/probe path). The raw observed
+    # labels drive the feasibility probe's setting DISTRIBUTION.
     season_ok: bool = True
     habitat_ok: bool = True
     time_ok: bool = True
-    features: str = ""                 # species_features (what the model SAW)
+    season_observed: str = ""
+    habitat_observed: str = ""
+    time_observed: str = ""
+    shot_type: str = ""
+    features: str = ""                 # what the model SAW (its own words — no template handed)
     features_indicate: str = ""        # the species those features point to (for the contradiction check)
     contradiction: bool = False        # features_indicate ↔ species verdict disagree (fighting its evidence)
     reason: str = ""
     skipped: bool = False
 
 
+# NO morphology is handed to the model — it would only give it a script to RECITE (the def_echo=1.0
+# wolf reads). The gate DESCRIBES what it sees and decides from its own knowledge of the named subject.
 _SYSTEM = (
-    "You are a QA checker for a WILD-animal documentary. You are shown a few frames from ONE clip plus "
-    "what the shot is SUPPOSED to contain, broken into axes. Judge each axis ONLY from what is visible, "
-    "and judge the SETTING axes (season, habitat, time) independently of each other and of the animal.\n"
-    "Report your real EPISTEMIC STATE — do NOT force a yes/no when the image is ambiguous. Return STRICT "
-    "JSON only, in THIS ORDER (reason BEFORE labelling):\n"
-    '{"species_features": "<distinguishing features you SEE: muzzle length/breadth, head & body '
-    'size/frame, ear size relative to head, leg length, coat/markings>", '
-    '"features_indicate": "<the species those features most point to, 1-2 words>", '
+    "You are a QA checker for a WILD-animal documentary. You are shown a few frames from ONE clip and told "
+    "only the NAME of the subject the shot should contain. Judge ONLY from what is visible. Report your "
+    "real EPISTEMIC STATE — do NOT force a yes/no when the image is ambiguous.\n"
+    "DESCRIBE WHAT YOU SEE in your OWN words first (do not use any template): the animal's build, head, "
+    "limbs, coat/markings, size cues, and anything distinctive. Then decide, from your own knowledge of "
+    "what the named subject looks like, whether it is that subject. Return STRICT JSON only, in THIS "
+    "ORDER (describe before labelling):\n"
+    '{"features": "<what you actually SEE of the animal, your own words>", '
+    '"features_indicate": "<the species those features point to, 1-2 words>", '
     '"species": "clear_match" | "uncertain" | "clear_mismatch", '
     '"wild_evidence": "<captivity signs you SEE (fence, bars, cage, enclosure, wall, building, collar, '
     'leash, manicured/compacted ground) OR open natural terrain>", '
     '"wild": "clear_match" | "uncertain" | "clear_mismatch", '
-    '"season_ok": bool, "habitat_ok": bool, "time_ok": bool, "reason": str}.\n'
-    "SPECIES: name the features, then the species they indicate, then label — clear_match = the features "
-    "CLEARLY match the expected subject; clear_mismatch = they CLEARLY indicate a DIFFERENT species "
-    "(coyote/jackal/domestic dog/wolf-dog hybrid when a grey wolf is expected); uncertain = ambiguous, or "
-    "you cannot confidently distinguish. A grey wolf has a long broad muzzle, large blocky head, heavy "
-    "deep-chested frame, long legs, ears short relative to the head; a coyote/jackal is smaller and "
-    "slighter with a narrow pointed muzzle and large ears. Do NOT default to clear_mismatch when unsure — "
-    "say uncertain. If the features you listed match the expected subject, do NOT label clear_mismatch.\n"
+    '"season": "<what season the setting shows: e.g. snow/winter, dry, lush-green/wet, autumn, unclear>", '
+    '"habitat": "<what habitat you see: e.g. savanna, forest, tundra, waterhole, grassland, coast, '
+    'underwater, mountain, desert>", '
+    '"time_of_day": "<day, golden-hour, dawn, dusk, night, or unclear>", '
+    '"shot_type": "<wide, medium, close-up, aerial/drone, or underwater>", "reason": str}.\n'
+    "SPECIES: clear_match = the animal is CLEARLY the named subject; clear_mismatch = it is CLEARLY a "
+    "DIFFERENT species (including a similar-looking one — say which in features_indicate); uncertain = "
+    "ambiguous or you cannot confidently tell. Do NOT default to clear_mismatch when unsure — say "
+    "uncertain. If what you described matches the named subject, do NOT label clear_mismatch.\n"
+    "SEASON / HABITAT / TIME_OF_DAY / SHOT_TYPE are OBSERVATIONS — report what the frames actually show, "
+    "not what is 'expected' (nothing is expected). "
     "WILD: clear_match = clearly wild/natural, no sign of captivity or human construction; clear_mismatch "
     "= clear captivity signs (fence/bars/cage/enclosure/wall/building/collar/leash/manicured ground); "
-    "uncertain = ambiguous. SEASON/HABITAT/TIME: true iff the visible setting matches the expected terms; "
-    "for any of these three with NO expectation given, return true."
+    "uncertain = ambiguous."
 )
 
 
@@ -127,14 +138,19 @@ def _image_block(fp: str) -> dict:
 
 
 def _expect_text(expect: Expect) -> str:
-    lines = [f"Expected subject (species): {expect.subject or 'the described wild animal'}.",
-             "Expected setting: WILD/natural (no captivity)."]
-    for axis in _SETTING_AXES:
-        terms = expect.terms(axis)
-        req = "BLOCKING" if axis in expect.required else "advisory"
-        lines.append(f"Expected {axis.replace('_', ' ')}: {', '.join(terms) or 'any'} ({req}).")
-    lines.append("Return the JSON verdict.")
-    return "\n".join(lines)
+    # ONLY the subject NAME is handed to the model (no morphology, no setting expectations). Setting is
+    # OBSERVED; season/habitat/time matching against any expectation happens in CODE (vision_check).
+    return (f"The subject the shot should contain is: {expect.subject or 'a wild animal'}.\n"
+            "Describe what you see, then return the JSON verdict.")
+
+
+def _setting_match(observed: str, terms: tuple) -> bool:
+    """True if no terms are expected (the exploratory/probe path), else if any expected term appears in
+    the OBSERVED label. Setting is judged in code from the model's observation, never in the prompt."""
+    if not terms:
+        return True
+    o = (observed or "").lower()
+    return any(t.lower() in o for t in terms)
 
 
 _SAMPLES = 3   # majority-of-N per axis: temperature=0 alone still flips a borderline call, and a wrong
@@ -182,9 +198,11 @@ def _single_call(frames: list[str], expect: Expect, llm, *, channel_id, job_id) 
         return None
     return {"species": _label(str(d.get("species", UNCERTAIN))),
             "wild": _label(str(d.get("wild", UNCERTAIN))),
-            "season": bool(d.get("season_ok", True)), "habitat": bool(d.get("habitat_ok", True)),
-            "time_of_day": bool(d.get("time_ok", True)),
-            "features": str(d.get("species_features", "")).strip(),
+            "season_observed": str(d.get("season", "")).strip().lower(),
+            "habitat_observed": str(d.get("habitat", "")).strip().lower(),
+            "time_observed": str(d.get("time_of_day", "")).strip().lower(),
+            "shot_type": str(d.get("shot_type", "")).strip().lower(),
+            "features": str(d.get("features", "")).strip(),
             "features_indicate": str(d.get("features_indicate", "")).strip(),
             "reason": str(d.get("reason", "")).strip()}
 
@@ -196,39 +214,14 @@ def _majority_label(labels: list[str]) -> str:
 
 
 _ECHO_THRESHOLD = 0.75    # feature-string similarity above which two clips' descriptions are "identical"
-_DEF_ECHO_THRESHOLD = 0.80   # definition-containment above which a clip's features RECITE a definition
 
-# The morphology the PROMPT offers as examples — definition-echo measures how much a clip's `features`
-# RECITE these rather than describe the specific frame. Keep in sync with _SYSTEM.
-_PROMPT_DEFINITIONS = {
-    "grey wolf": "long broad muzzle large blocky head heavy deep chested frame long legs ears short",
-    "coyote/jackal": "smaller slighter narrow pointed muzzle large ears small head",
-}
-_DEF_STOP = frozenset(
-    "the and to of with relative proportional size appears moderately overall along back sides compared "
-    "body length its has dark coat markings white grey tan brown saddle build reddish golden".split())
+# NOTE: `definition_echo` was RETIRED with the gate rework — no morphology is handed to the model, so
+# there is nothing to recite (the def_echo=1.0 wolf reads were the symptom of handing it a script). The
+# clip-vs-clip echo below and the contradiction check remain valid.
 
 
 def features_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, (a or "").lower(), (b or "").lower()).ratio()
-
-
-def _content_words(text: str) -> set:
-    return {w for w in re.findall(r"[a-z]+", (text or "").lower()) if len(w) > 2 and w not in _DEF_STOP}
-
-
-def definition_echo(features: str) -> dict:
-    """DEFINITION-ECHO: for each prompt definition, the fraction of ITS content words present in the
-    clip's `features` (containment). High (≥_DEF_ECHO_THRESHOLD) means the description tracks the CANNED
-    definition, not the specific image — a recitation risk (the accepted wolves scored 0.85–1.0). This
-    is REPORTED, not auto-blocking: a real animal legitimately matches its own definition, so the number
-    INFORMS how much to trust the verdict rather than overriding it."""
-    fw = _content_words(features)
-    out = {}
-    for name, dfn in _PROMPT_DEFINITIONS.items():
-        dw = _content_words(dfn)
-        out[name] = round(len(dw & fw) / len(dw), 2) if dw else 0.0
-    return out
 
 
 def detect_echo(items: list[tuple], *, threshold: float = _ECHO_THRESHOLD) -> list[tuple]:
@@ -298,13 +291,15 @@ def vision_check(frames: list[str], *, expect: Expect, llm, samples: int = _SAMP
 
     species = _majority_label([c["species"] for c in calls])
     wild = _majority_label([c["wild"] for c in calls])
-    season_ok = sum(c["season"] for c in calls) > len(calls) / 2
-    habitat_ok = sum(c["habitat"] for c in calls) > len(calls) / 2
-    time_ok = sum(c["time_of_day"] for c in calls) > len(calls) / 2
-
     rep = next((c for c in calls if c["species"] == species), calls[0])   # a call agreeing with the mode
-    # CONTRADICTION: the listed evidence points to the expected subject but the label rejects it (today's
-    # bug), or points elsewhere yet the label accepts. Detected from features_indicate vs the subject.
+
+    # SETTING is judged in CODE from the model's OBSERVATION vs any expectation (nothing expected → True)
+    season_ok = _setting_match(rep["season_observed"], expect.season)
+    habitat_ok = _setting_match(rep["habitat_observed"], expect.habitat)
+    time_ok = _setting_match(rep["time_observed"], expect.time_of_day)
+
+    # CONTRADICTION: features_indicate points to the subject but the label rejects it, or points
+    # elsewhere yet the label accepts. Detected from features_indicate vs the subject noun.
     noun = _head_noun(expect.subject)
     indicates_subject = _indicates_subject(rep["features_indicate"], noun)
     names_other = bool(rep["features_indicate"]) and not indicates_subject and bool(noun) \
@@ -314,9 +309,11 @@ def vision_check(frames: list[str], *, expect: Expect, llm, samples: int = _SAMP
 
     agree = sum(1 for c in calls if c["species"] == species)
     reason = (f"[{agree}/{len(calls)} agree species={species}] "
-              + (f"[features:{rep['features'][:90]}→{rep['features_indicate']}] " if rep["features"] else "")
+              + (f"[sees:{rep['features'][:80]}→{rep['features_indicate']}] " if rep["features"] else "")
               + rep["reason"])
     return VisionVerdict(species=species, wild=wild, season_ok=season_ok, habitat_ok=habitat_ok,
-                         time_ok=time_ok, features=rep["features"],
+                         time_ok=time_ok, season_observed=rep["season_observed"],
+                         habitat_observed=rep["habitat_observed"], time_observed=rep["time_observed"],
+                         shot_type=rep["shot_type"], features=rep["features"],
                          features_indicate=rep["features_indicate"], contradiction=contradiction,
                          reason=reason[:300])

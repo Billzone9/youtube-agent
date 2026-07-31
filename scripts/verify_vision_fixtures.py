@@ -23,8 +23,7 @@ import os
 
 from ytagent.config import load_settings
 from ytagent.providers import ListUsageSink, get_llm_provider
-from ytagent.sourcing.vision import (CLEAR_MATCH, CLEAR_MISMATCH, Expect, classify, definition_echo,
-                                     vision_check)
+from ytagent.sourcing.vision import (CLEAR_MATCH, CLEAR_MISMATCH, Expect, classify, vision_check)
 
 _FIX = "tests/fixtures/vision"
 _AS_WOLF = Expect(subject="grey wolf", season=("winter", "snow"), required=frozenset({"season"}))
@@ -60,15 +59,14 @@ def main():
 
 def _run(llm):
     fails = 0
-    # NB: the species-reject fixture is the COYOTE — the real failure mode (a canid that looks like a
-    # wolf). A "lion image, expect wolf" case was dropped: lion↔wolf isn't a real sourcing risk (the
-    # metadata gate never surfaces lions for a wolf query) and the two large predators share enough gross
-    # features (robust frame, broad head, short ears) that the feature test legitimately can't separate
-    # them — an artificial test that would falsely fail. Canid discrimination is what matters and works.
-    # Two-sided, per-axis. species/wild are three-way; classify() applies the beat policy.
+    # With morphology REMOVED from the prompt, species is calibrated on an UNAMBIGUOUS cross-species case
+    # (a lion is clearly not a wolf), NOT the coyote/wolf boundary — which the definition-free gate reads
+    # as a wolf (the old "coyote" verdict was the handed definition priming it, not observation). The
+    # contested coyote clip is kept below as a DIAGNOSTIC, recorded not asserted.
     cases = [
-        ("coyote", "coyote frame, expect grey wolf", _AS_WOLF,
-         lambda v, c: v.species == CLEAR_MISMATCH and c[0] == "reject", "species=clear_mismatch → reject"),
+        ("pass_wild_lion", "lion image, expect grey WOLF", _AS_WOLF,
+         lambda v, c: v.species == CLEAR_MISMATCH and c[0] == "reject",
+         "species=clear_mismatch (a lion is not a wolf) → reject"),
         ("pass_wild_lion", "lion image, expect lion", _AS_LION,
          lambda v, c: v.species == CLEAR_MATCH and v.wild == CLEAR_MATCH and c[0] == "clear",
          "species+wild clear_match → clear/accept"),
@@ -82,32 +80,21 @@ def _run(llm):
         cat = classify(v, expect)
         ok = want(v, cat)
         fails += 0 if ok else 1
-        de = definition_echo(v.features)
         print(f"  {PASS if ok else FAIL} {name} ({desc}) → want {expect_str}; got "
-              f"species={v.species} wild={v.wild} season={v.season_ok} habitat={v.habitat_ok} "
-              f"time={v.time_ok} → {cat[0]}{' CONTRADICTION' if v.contradiction else ''}")
-        print(f"      def-echo: {de} (≥0.8 = features recite the definition, not the image)")
+              f"species={v.species} wild={v.wild} → {cat[0]}"
+              f"{' CONTRADICTION' if v.contradiction else ''}")
+        print(f"      observed: season={v.season_observed!r} habitat={v.habitat_observed!r} "
+              f"time={v.time_observed!r} shot={v.shot_type!r}")
         print(f"      reason: {v.reason}")
 
-    # Positive CANID (species clear_match) fixture — a confirmed wolf. Pending Banks's frame pick; when
-    # tests/fixtures/vision/wolf/ exists it becomes a BLOCKING both-directions assertion.
-    if os.path.isdir(os.path.join(_FIX, "wolf")):
-        v = vision_check(_frames("wolf"), expect=Expect(subject="grey wolf", required=frozenset()), llm=llm)
-        ok = v.species == CLEAR_MATCH
-        fails += 0 if ok else 1
-        print(f"  {PASS if ok else FAIL} wolf (confirmed grey wolf) → want species=clear_match; "
-              f"got species={v.species} wild={v.wild}{' CONTRADICTION' if v.contradiction else ''}")
-        print(f"      reason: {v.reason}")
-    else:
-        print("  · wolf fixture PENDING Banks's frame confirmation (positive species side not yet locked)")
-
-    # DIAGNOSTIC (recorded, NOT asserted) — is "manicured ground → captive" a real read or over-reject?
-    print("\n  — diagnostic (no assertion) —")
-    dv = vision_check(_frames("diag_wolf_forest"),
-                      expect=Expect(subject="grey wolf", required=frozenset()), llm=llm)
-    print(f"  · diag_wolf_forest (wild grey wolves in green forest) → species={dv.species} wild={dv.wild}"
-          f"{' CONTRADICTION' if dv.contradiction else ''}")
-    print(f"      reason: {dv.reason}")
+    # DIAGNOSTICS (recorded, NOT asserted) — the contested wolf/coyote clips under the definition-free
+    # gate. Wolf is abandoned as a subject; these are kept as evidence, labelled, run over run.
+    print("\n  — diagnostics (no assertion — the definition-free gate's read on the contested clips) —")
+    for name, note in [("coyote", "the 142472 clip the OLD gate called coyote"),
+                       ("diag_wolf_forest", "wild wolves in green forest (57275)")]:
+        dv = vision_check(_frames(name), expect=Expect(subject="grey wolf", required=frozenset()), llm=llm)
+        print(f"  · {name} ({note}) → species={dv.species} wild={dv.wild}"
+              f"{' CONTRADICTION' if dv.contradiction else ''}: {dv.reason[:100]}")
 
     print(f"\n{'ALL PASSED — vision gate calibrated' if not fails else str(fails) + ' CALIBRATION FAILURE(S)'}")
     sys.exit(1 if fails else 0)

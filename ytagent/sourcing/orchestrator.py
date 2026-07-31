@@ -180,12 +180,12 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                 v = _vision.vision_check(frames, expect=expect, llm=llm,
                                          channel_id=channel_id, job_id=job_id)
             category, drivers = _vision.classify(v, expect)
-            def_echo = _vision.definition_echo(v.features) if v.features else {}
             rec = {"asset_id": cand.asset_id, "url": cand.page_url, "category": category,
                    "species": v.species, "wild": v.wild, "season": v.season_ok, "habitat": v.habitat_ok,
                    "time": v.time_ok, "drivers": list(drivers), "contradiction": v.contradiction,
                    "features": v.features, "features_indicate": v.features_indicate,
-                   "def_echo": round(max(def_echo.values()), 2) if def_echo else 0.0,
+                   "season_obs": v.season_observed, "habitat_obs": v.habitat_observed,
+                   "time_obs": v.time_observed, "shot_type": v.shot_type,
                    "used": False, "reason": v.reason}
             verdicts.append(rec)
             if collect_verdicts is not None:
@@ -210,17 +210,11 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
     # reciting a canned definition rather than describing the image. Both surfaced; (a) is a hard signal.
     echo_pairs = _vision.detect_echo(
         [(v["asset_id"], v.get("features", ""), v.get("species")) for v in verdicts])
-    def_echoed = [v["asset_id"] for v in verdicts if v.get("def_echo", 0) >= _vision._DEF_ECHO_THRESHOLD]
     if echo_pairs:
         await record_event(conn, "sourcing.prompt_echo",
                            message=f"{brief_ref}: {len(echo_pairs)} near-identical features across "
                                    "DIFFERENT verdicts — gate gave different answers to the same evidence",
                            channel_id=channel_id, job_id=job_id, data={"pairs": echo_pairs})
-    if def_echoed:
-        await record_event(conn, "sourcing.definition_echo",
-                           message=f"{brief_ref}: {len(def_echoed)} clip(s) whose features RECITE a "
-                                   f"definition (≥{_vision._DEF_ECHO_THRESHOLD}) — verdicts may be recitation",
-                           channel_id=channel_id, job_id=job_id, data={"asset_ids": def_echoed})
 
     # POLICY: fill from CLEAR first; draw the UNCERTAIN reserve ONLY to reach n_min, flagging each used.
     winners = clear[:n_target]
@@ -239,12 +233,11 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
         await record_event(conn, "sourcing.beat_sourced",
                            message=f"{brief_ref}: {len(winners)} clips ({len(clear)} clear, "
                                    f"{len(uncertain_used)} uncertain-used; min {n_min}, target {n_target}; "
-                                   f"{contradictions} contradiction, {len(echo_pairs)} echo, "
-                                   f"{len(def_echoed)} def-echo)",
+                                   f"{contradictions} contradiction, {len(echo_pairs)} echo)",
                            channel_id=channel_id, job_id=job_id,
                            data={"asset_ids": [w.asset_id for w in winners],
                                  "uncertain_used": uncertain_used, "contradictions": contradictions,
-                                 "echo_pairs": echo_pairs, "def_echoed": def_echoed, "verdicts": verdicts})
+                                 "echo_pairs": echo_pairs, "verdicts": verdicts})
         return winners
     n_reject = sum(1 for v in verdicts if v["category"] == "reject")
     n_unc = sum(1 for v in verdicts if v["category"] == "uncertain")
