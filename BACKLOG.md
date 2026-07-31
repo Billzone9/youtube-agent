@@ -43,7 +43,17 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
-## Vision gate — hardening (from the wolf Stage-1 gate work, 2026-07-31)
+## Known defect (log, do not chase)
+- `[ ]` **Contradiction detector — unreconciled false-fire.** The clean wolf Stage-1 run logged 2
+  `sourcing.vision_contradiction` events on clips 27367 and 57275, both with `species=clear_match` and
+  `features_indicate="Grey wolf"`. Reproducing the detector on that exact input returns
+  `contradiction=False`, so the stored flag is unexplained (likely a cross-beat state issue — 27367 read
+  clear_match in beat1 but clear_mismatch in beat2 on the same frames). It **changed the mechanical
+  label (→ INCONCLUSIVE), not the underlying zero verified clips.** Root-cause when the detector is next
+  touched; not worth chasing now.
+
+## Vision gate — hardening (PROMOTED into the feasibility slice, 2026-07-31 — no longer deferred)
+The two items below are now IN the feasibility slice (changing subject requires a channel-general gate):
 - `[ ]` **VISION GATE IS NOT CHANNEL-GENERAL — fix before the SECOND subject (BLOCKER for subject #2).**
   `ytagent/sourcing/vision.py` hardcodes grey-wolf/coyote morphology in `_PROMPT_DEFINITIONS` **and** in
   the `_SYSTEM` prompt's examples. On an elephant or eagle film the gate is primed with canid examples,
