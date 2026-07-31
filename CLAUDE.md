@@ -148,6 +148,17 @@ The budget ceiling is **GLOBAL** across all channels (£200→£350→£500), no
 ROAS figure must be net of real costs. Months 1–3 are investment (spec §3) — the goal is a true
 baseline, not month-one profit.
 
+**KNOWN-LOSSY WINDOW — sub-penny LLM spend before migration 0007 (honest footnote on month-1 ROI).**
+From Slice 1 until 2026-07-31, `amount_gbp` was `numeric(12,2)` and `usage_to_gbp` quantised GBP to 2dp,
+so any LLM call under ~£0.005 recorded as **£0.00** (all Haiku calls; small Sonnet calls mis-rounded by
+up to a penny). The USD figure (`amount_original`, 6dp) is intact; only the summed GBP is understated.
+Migration 0007 widened the column to 4dp and `usage_to_gbp` now quantises to 0.0001, so spend from
+2026-07-31 on is exact. **No backfill:** `write_llm_cost` is idempotent on `llm:{request_id}` (a replay
+UPSERTs, it does not recompute), so historical rows stay at their lossy 2dp value. The month-1 ROI must
+therefore footnote: *"LLM spend before 2026-07-31 is understated (sub-penny rounding); reconcile against
+the live Anthropic USD balance, not the early GBP ledger sum."* The lossy window is small in absolute
+terms (pennies of Haiku) but the footnote keeps early data honest rather than presenting it as clean.
+
 ## Spending & safety — structural, not behavioural
 - Money the agent can spend is controlled **structurally**: scoped API keys with hard credit caps
   (what the key CAN'T do), not rules it is told to follow. The ElevenLabs key is scoped to Music with
@@ -190,6 +201,12 @@ baseline, not month-one profit.
   to the lion (17 clips/7 beats); full standard in `visual-density-standard.md`. Enforced by
   `ytagent/assembly/density.py:assert_visual_density` (a HARD gate before every render — a too-sparse
   or clip-reusing cut fails loud, no render) and by N-distinct-clip sourcing (`source_clips_for_brief`).
+- **VISION GATE — three-way verdict + self-checks (full standard in `vision-gate-standard.md`).** The
+  sourcing content gate judges species/wild as `clear_match/uncertain/clear_mismatch` (POLICY decides
+  what uncertainty costs, not the prompt) and is WATCHED for two reasoning failures, both counted, both
+  meaning "do not conclude": **evidence↔verdict contradiction** (it recites a definition then labels
+  against it) and **prompt-echo** (different clips → near-identical "features" = reciting, not
+  observing). Calibrate two-sided, both axes, on 3-frame fixtures; `temperature=0` + majority-of-3.
 
 ## Autonomous asset sourcing (human approval is the gate)
 When building videos automatically you MAY search claim-safe sources (Pixabay, Freesound CC0-only,

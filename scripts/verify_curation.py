@@ -100,6 +100,16 @@ def main():
     vd2 = vision_check([_FRAME], expect=wolf, llm=_FakeVisionLLM(_v(species=CLEAR_MATCH, indicate="grey wolf")))
     check("features say wolf and verdict accepts → contradiction=False", vd2.contradiction is False)
 
+    print("[4c] PROMPT-ECHO detected (near-identical features across DIFFERENT clips = reciting)")
+    from ytagent.sourcing.vision import detect_echo
+    echo = "Narrow pointed muzzle, relatively large ears proportional to head size, slender frame, long legs"
+    diff = "Broad heavy muzzle, large blocky head, thick neck and deep chest, short ears, robust frame"
+    check("two different clips, near-identical features → flagged",
+          len(detect_echo([("a", echo), ("b", echo + ", tan coat")])) == 1)
+    check("two different clips, genuinely different features → not flagged",
+          len(detect_echo([("a", echo), ("b", diff)])) == 0)
+    check("same clip id never self-flags", len(detect_echo([("a", echo), ("a", echo)])) == 0)
+
     print("[5] Item 6 — vision gate FAILS LOUD when required but no LLM")
     async def _no_llm():
         return await source_clips_for_brief(

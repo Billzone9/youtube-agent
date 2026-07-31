@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
 from ..assembly import ffmpeg
 
@@ -192,6 +193,31 @@ def _majority_label(labels: list[str]) -> str:
     """Mode of the three-way labels; no strict majority (e.g. a 3-way split) → UNCERTAIN (the middle)."""
     best = max(_LABELS, key=lambda lab: labels.count(lab))
     return best if labels.count(best) > len(labels) / 2 else UNCERTAIN
+
+
+_ECHO_THRESHOLD = 0.75   # feature-string similarity above which two DIFFERENT clips read as prompt-echo
+
+
+def features_similarity(a: str, b: str) -> float:
+    return SequenceMatcher(None, (a or "").lower(), (b or "").lower()).ratio()
+
+
+def detect_echo(items: list[tuple[str, str]], *, threshold: float = _ECHO_THRESHOLD) -> list[tuple]:
+    """PROMPT-ECHO detector (same self-check family as the contradiction detector). `items` = list of
+    (clip_id, species_features). Two DIFFERENT clips whose feature descriptions are near-identical is a
+    sign the model is RECITING a definition, not observing the frame (e.g. a wide pack shot and a tight
+    close-up yielding verbatim-identical 'features'). Returns [(id_a, id_b, similarity)] over threshold —
+    when nonzero, the gate's verdicts on those clips are NOT trustworthy evidence."""
+    out: list[tuple] = []
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            (ida, fa), (idb, fb) = items[i], items[j]
+            if ida == idb or not fa or not fb:
+                continue
+            s = features_similarity(fa, fb)
+            if s >= threshold:
+                out.append((ida, idb, round(s, 3)))
+    return out
 
 
 def _setting_ok(v: "VisionVerdict", axis: str) -> bool:

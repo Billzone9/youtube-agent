@@ -104,15 +104,17 @@ async def curate_report(conn, providers, script, *, channel_id, job_id=None, llm
             negative_terms=negative_terms, collect_verdicts=verdicts)
         got = [] if isinstance(res, NoMatch) else res
         used |= {(a.source, a.asset_id) for a in got}
-        used_ids = {a.asset_id for a in got}
         uncertain_used = [v["asset_id"] for v in verdicts
                           if v.get("used") and v.get("category") == "uncertain"]
+        from .sourcing.vision import detect_echo
+        echo_pairs = detect_echo([(v["asset_id"], v.get("features", "")) for v in verdicts])
         report.append({"beat": b.index, "label": b.label, "narration_s": round(hint, 1),
                        "required_axes": sorted(required) if required else ["season"],
                        "n_min": n_min, "n_target": n_tgt, "verified": len(got),
                        "clear": len([v for v in verdicts if v.get("category") == "clear"]),
                        "uncertain_used": uncertain_used,
                        "contradictions": sum(1 for v in verdicts if v.get("contradiction")),
+                       "echo_pairs": echo_pairs,
                        "reached_min": len(got) >= n_min,
                        "accepted": [{"asset_id": a.asset_id, "url": a.candidate.page_url} for a in got],
                        "verdicts": verdicts,

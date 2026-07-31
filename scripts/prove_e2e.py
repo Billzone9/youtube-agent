@@ -113,10 +113,11 @@ async def stage1(conn, settings):
 
     _INCIDENTAL = ("habitat", "time_of_day")
     short = {"wild": 0, "species": 0, "season": 0, "incidental": 0}
-    total_contradictions = 0
+    total_contradictions = total_echo = 0
     for r in report:
         mark = "✅ PASS" if r["reached_min"] else "❌ NEEDS WORK"
         total_contradictions += r.get("contradictions", 0)
+        total_echo += len(r.get("echo_pairs", []))
         print(f"beat{r['beat']} '{r['label']}' — {mark}: {r['verified']} verified "
               f"({r.get('clear', 0)} clear + {len(r.get('uncertain_used', []))} uncertain-used) / "
               f"{r['n_min']} min (target {r['n_target']}, {r['narration_s']}s)  "
@@ -126,6 +127,9 @@ async def stage1(conn, settings):
             print(f"    ✓ {a['asset_id']}{u}  {a['url']}")
         if r.get("contradictions"):
             print(f"    ⚠ {r['contradictions']} evidence↔verdict CONTRADICTION(S) — gate may be miscalibrated")
+        if r.get("echo_pairs"):
+            print(f"    ⚠ {len(r['echo_pairs'])} PROMPT-ECHO pair(s) (near-identical features across "
+                  f"different clips) — gate RECITING, not observing; its verdicts here are not evidence")
 
         # rejection breakdown for THIS beat → its dominant reject driver
         beat_tally = {}
@@ -146,9 +150,10 @@ async def stage1(conn, settings):
 
     # Decision rule (per short beat) with the world-(B) INFEASIBLE-WILD branch made explicit:
     n_short = sum(short.values())
-    if total_contradictions > 0:
-        verdict = (f"INCONCLUSIVE — {total_contradictions} evidence↔verdict contradiction(s): the gate is "
-                   "fighting its own evidence. Recalibrate before trusting ANY scarcity conclusion.")
+    if total_contradictions > 0 or total_echo > 0:
+        verdict = (f"INCONCLUSIVE — {total_contradictions} contradiction(s) + {total_echo} prompt-echo "
+                   "pair(s): the gate is reciting/fighting its own evidence, not observing. Recalibrate "
+                   "before trusting ANY scarcity conclusion.")
     elif n_short == 0:
         verdict = "PASS — every beat reached n_min. Ready for Stage 2 on your go."
     elif short["wild"] >= 1 and short["wild"] >= short["species"] + short["season"]:

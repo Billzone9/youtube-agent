@@ -183,6 +183,7 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
             rec = {"asset_id": cand.asset_id, "url": cand.page_url, "category": category,
                    "species": v.species, "wild": v.wild, "season": v.season_ok, "habitat": v.habitat_ok,
                    "time": v.time_ok, "drivers": list(drivers), "contradiction": v.contradiction,
+                   "features": v.features, "features_indicate": v.features_indicate,
                    "used": False, "reason": v.reason}
             verdicts.append(rec)
             if collect_verdicts is not None:
@@ -202,6 +203,15 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
         (clear if category == "clear" else reserve).append(asset)
         taken.add(key)
 
+    # PROMPT-ECHO check: if DIFFERENT clips got near-identical feature descriptions, the gate is reciting,
+    # not observing — its verdicts on this beat are not trustworthy evidence (loud + counted).
+    echo_pairs = _vision.detect_echo([(v["asset_id"], v.get("features", "")) for v in verdicts])
+    if echo_pairs:
+        await record_event(conn, "sourcing.prompt_echo",
+                           message=f"{brief_ref}: {len(echo_pairs)} near-identical feature description(s) "
+                                   "across DIFFERENT clips — gate may be RECITING, not observing",
+                           channel_id=channel_id, job_id=job_id, data={"pairs": echo_pairs})
+
     # POLICY: fill from CLEAR first; draw the UNCERTAIN reserve ONLY to reach n_min, flagging each used.
     winners = clear[:n_target]
     uncertain_used: list[str] = []
@@ -219,22 +229,23 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
         await record_event(conn, "sourcing.beat_sourced",
                            message=f"{brief_ref}: {len(winners)} clips ({len(clear)} clear, "
                                    f"{len(uncertain_used)} uncertain-used; min {n_min}, target {n_target}; "
-                                   f"{contradictions} contradiction(s))",
+                                   f"{contradictions} contradiction(s), {len(echo_pairs)} echo)",
                            channel_id=channel_id, job_id=job_id,
                            data={"asset_ids": [w.asset_id for w in winners],
                                  "uncertain_used": uncertain_used, "contradictions": contradictions,
-                                 "verdicts": verdicts})
+                                 "echo_pairs": echo_pairs, "verdicts": verdicts})
         return winners
     n_reject = sum(1 for v in verdicts if v["category"] == "reject")
     n_unc = sum(1 for v in verdicts if v["category"] == "uncertain")
     reason = (f"only {len(clear)} clear + {n_unc} uncertain (need ≥{n_min}) — "
               + ("no candidates" if best == 0.0 else f"best {best:.2f}")
               + (f", {n_reject} rejected by the gate" if n_reject else "")
-              + (f", {contradictions} contradiction(s)" if contradictions else ""))
+              + (f", {contradictions} contradiction(s)" if contradictions else "")
+              + (f", {len(echo_pairs)} prompt-echo" if echo_pairs else ""))
     await record_event(conn, "sourcing.no_match", message=f"{brief_ref}: {reason}",
                        channel_id=channel_id, job_id=job_id,
                        data={"considered": list(considered), "verdicts": verdicts,
-                             "contradictions": contradictions})
+                             "contradictions": contradictions, "echo_pairs": echo_pairs})
     return NoMatch(shot_brief_ref=brief_ref, reason=reason, considered=considered)
 
 
