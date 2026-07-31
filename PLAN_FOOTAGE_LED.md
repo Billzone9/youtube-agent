@@ -25,7 +25,45 @@ encodes the missing pre-scripting stage so this can't recur.
 **No code until Banks approves. All approved amendments still stand (incl. the 4,000 Music-credit
 ceiling). No Stage 2 until a CLEAN Stage 1 is green and Banks says go.**
 
----
+## APPROVED AMENDMENT + SPECIFICATIONS (2026-07-31 — override anything below they touch)
+
+**AMENDMENT — axis requiredness is PER-BEAT, derived from the narration.** Globally-advisory habitat +
+time-of-day swaps over-constraint for UNDER-constraint: beat4 "The howl at the edge of dark" locks the
+time of day in the VO itself, so advisory time would let midday footage sit under a dusk narration —
+the exact error this slice exists to prevent. Rule: **read each beat's narration text, determine which
+axes it LOCKS, make those blocking FOR THAT BEAT ONLY.** Season stays blocking throughout. A beat whose
+VO names no habitat leaves habitat advisory; a beat whose VO names no time leaves time advisory. Report
+the **derived per-beat requiredness** in the Stage-1 output. This is measure-first applied to the
+SCRIPT; it generalises to every film and is encoded in `footage-feasibility-standard.md` (Item 4).
+- *Wolf caveat:* job 29 did not persist the VO text (only the mp3s), so the per-beat lock is derived
+  from the viewer-facing **beat LABEL** (VO-level, not the brief, which over-names axes I wrote). Labels
+  give: beat1 "Before the pack wakes" → **time (dawn) blocking**; beat4 "…edge of dark" → **time (dusk)
+  blocking**; beats 2/3 name no time/habitat → time+habitat advisory; season blocking on all four.
+
+**SPECIFY 1 — feasibility threshold (derived from the density standard).** Per beat
+`n_min = min_clips(L)`, `n_target = max(target_clips(L), n_min+1)`. Wolf beats (37.2/43.0/37.3/39.5s):
+**Σn_min = 12** (3 each), **Σn_target = 16** (4 each). Feasibility target **T = Σn_target × 1.25
+(margin for the vision gate's rejection rate + unusable-but-passing clips) = 20**; floor **= Σn_min =
+12**. The probe searches subject+season, finds `E` metadata-eligible candidates, vision-samples
+`min(E, sample_n=10)`, gets pass-rate `p`, estimates yield **Y = p × E**. **FEASIBLE: Y ≥ 20 ·
+MARGINAL: 12 ≤ Y < 20 · INFEASIBLE: Y < 12** (or E < 12 regardless of p). The 25% margin is the single
+tunable; sample_n=10 bounds probe cost to ~10 vision calls.
+
+**SPECIFY 2 — Stage-1 decision rule (fixed BEFORE the run, so the verdict isn't rationalised after):**
+- **PASS (green):** every beat reaches `n_min` verified clips → proceed to Stage 2 on Banks's go.
+- **MARGINAL → RE-BRIEF the short beats:** some beats green, others short, AND the shortfall is
+  attributable to an **incidental per-beat constraint** (an over-tight habitat/time lock, or a narrow
+  brief) — i.e. OTHER beats on the same subject+season succeeded, OR the short beat's dominant rejection
+  axis is habitat/time, not species/wild/season. Action: loosen the over-tight lock / broaden that
+  beat's brief and re-source ONLY those beats.
+- **FAIL → SUBJECT or SEASON change (the A/B/C fork):** the shortfall is **subject×season scarcity** —
+  species/wild/season is the dominant rejection axis across ≥half the beats, OR feasibility is
+  INFEASIBLE (Y < 12). Free stock genuinely lacks the wild in-season subject; escalate to paid stock or
+  change subject/season. No amount of re-briefing fixes a scarcity.
+
+**SPECIFY 3 — vision-cost estimate (stated before the clean Stage 1 is run; estimate-before-spending
+applies to vision calls too).** Computed and reported at the STOP point this turn, before any run.
+
 
 ## Item 1 — SEPARATE THE AXES
 - Split `_SETTING` into **`_SEASON`**, **`_HABITAT`**, **`_TIME_OF_DAY`**. **DROP the mood adjectives
@@ -34,8 +72,10 @@ ceiling). No Stage 2 until a CLEAN Stage 1 is green and Banks says go.**
 - `QueryPlan` replaces the single `setting` with **`season`, `habitat`, `time_of_day`** tuples (each a
   distinct axis). `_llm_plan` returns them separately; the deterministic fallback classifies brief
   words by which list they hit.
-- `vision.Expect` carries the three axes with explicit requiredness: **season REQUIRED**, **habitat
-  ADVISORY**, **time_of_day ADVISORY** (item 3 sets which block).
+- `vision.Expect` carries the three axes each with an explicit `required` flag. **Season is always
+  required; habitat + time-of-day are required PER-BEAT** where the beat's narration/label locks them
+  (the Amendment) — otherwise advisory. A `derive_axis_locks(text)` helper scans the beat text and
+  returns which axes are locked.
 - The vision gate judges each as a **separate boolean** — `species_ok, wild_ok, season_ok, habitat_ok,
   time_ok` — each with its own short reason, and `season_ok` is judged ONLY against the season terms
   (snow/winter), never habitat. `overall_ok = species_ok AND wild_ok AND (season_ok if required)`;
@@ -53,18 +93,21 @@ ceiling). No Stage 2 until a CLEAN Stage 1 is green and Banks says go.**
   season pairing. This kills the "3 of 4 season-blind" pool contamination.
 
 ## Item 3 — RE-RUN STAGE 1 (clean evidence)
-- Axes separated; require **species + wild + season** only; **habitat + time-of-day advisory** (scored
-  and reported, not blocking).
-- Report per beat: verified counts AND a **per-axis rejection breakdown** (how many candidates died on
-  species vs wild vs season, with habitat/time noted). Pennies of Haiku, **no Music spend**. Only then
-  do we actually know what the libraries hold for a wild snowy wolf.
+- Axes separated; **species + wild + season blocking on every beat; habitat + time-of-day blocking ONLY
+  on the beats whose label/VO locks them** (the Amendment — beat1 time=dawn, beat4 time=dusk; others
+  advisory).
+- Report per beat: the **derived requiredness** (which axes were enforced), verified counts, AND a
+  **per-axis rejection breakdown** (how many candidates died on species vs wild vs season vs the
+  locked incidental axis). Then apply the SPECIFY-2 decision rule. Pennies of Haiku, **no Music spend**.
 
 ## Item 4 — FOOTAGE-FEASIBILITY PROBE (encoded as a standard)
 - New `ytagent/sourcing/feasibility.py`: **`probe_feasibility(subject, *, season, habitat, providers,
   llm, sample_n=~8) -> FeasibilityVerdict`** — runs BEFORE scripting. Sample-search subject+season,
   vision-gate the small sample, return **per-axis pass rates**, an **estimated wild-in-season yield**,
   a **cost estimate** (the sample's Haiku pennies), and **`feasible: bool`** — **fails loud when a
-  subject×season combination is unsupported** (yield below a threshold). Cheap, read-mostly.
+  subject×season combination is unsupported** (yield below the SPECIFY-1 threshold: FEASIBLE Y≥T_target,
+  MARGINAL floor≤Y<T_target, INFEASIBLE Y<floor). Cheap, read-mostly. The per-beat axis-lock rule (the
+  Amendment) is encoded in `footage-feasibility-standard.md` here.
 - Becomes a **required PRE-SCRIPTING stage** in the production flow (script only a topic whose footage
   is proven feasible), and later **feeds Slice 6's playbook** so the scheduler never commissions an
   unmakeable film (the BACKLOG coverage-probe lesson, now vision-verified not tag-counted).
