@@ -201,6 +201,11 @@ terms (pennies of Haiku) but the footnote keeps early data honest rather than pr
   to the lion (17 clips/7 beats); full standard in `visual-density-standard.md`. Enforced by
   `ytagent/assembly/density.py:assert_visual_density` (a HARD gate before every render — a too-sparse
   or clip-reusing cut fails loud, no render) and by N-distinct-clip sourcing (`source_clips_for_brief`).
+- **FOOTAGE-FEASIBILITY FIRST — prove the footage BEFORE scripting (full standard in
+  `footage-feasibility-standard.md`).** A subject must pass `probe_feasibility` (exploratory: species +
+  wild only, no pre-chosen season; verdict on wild+correct-species YIELD; the setting DISTRIBUTION is
+  reported as the raw material the footage-led script is written to) BEFORE a word of script. The wolf
+  (scripted-first, 0 verified) is the known-bad case; the lion savanna is known-good. Pennies of Haiku.
 - **VISION GATE — three-way verdict + self-checks (full standard in `vision-gate-standard.md`).** The
   sourcing content gate judges species/wild as `clear_match/uncertain/clear_mismatch` (POLICY decides
   what uncertainty costs, not the prompt) and is WATCHED for two reasoning failures, both counted, both
