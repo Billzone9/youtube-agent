@@ -39,20 +39,39 @@ Changing subject forces both fixes; the wolf run gave the evidence for the secon
   ledgered `context=calibration`.
 
 ## Part 2 — Build `probe_feasibility` and run it on FOUR subjects BEFORE any script
-Per the approved design (PLAN_FOOTAGE_LED Item 4 + SPECIFY-1 thresholds). `probe_feasibility(subject,
-*, season, providers, llm, sample_n≈10)`:
-- Sample-search the subject (+ season if the intended film is seasonal); measure the **candidate pool
-  depth** E (metadata-eligible after negative filter + must-term + threshold); vision-gate a sample of
-  `min(E, 10)`; compute **per-axis pass rates** (species / wild / season), the **estimated wild-in-
-  season yield** `Y = p × E`, the **def-echo on the accepted reads** (the recitation check), and a
-  verdict against the density-derived thresholds: **FEASIBLE Y ≥ 20 · MARGINAL 12 ≤ Y < 20 · INFEASIBLE
-  Y < 12** (Σn_min=12, Σn_target×1.25=20). Fail loud INFEASIBLE when unsupported. Read-mostly; pennies of
-  Haiku, **no Music, no TTS**.
-- Run it on the **four Banks-approved subjects**; report per subject: pool depth E, per-axis pass rates,
-  Y vs thresholds, def-echo on accepted reads, contradiction/echo counts, and FEASIBLE/MARGINAL/INFEASIBLE.
-- Encode `footage-feasibility-standard.md` (wolf = known-bad; lion savanna = known-good) — feasibility is
-  a required PRE-SCRIPTING stage; later feeds Slice 6's playbook so the scheduler never commissions an
-  unmakeable film.
+
+**REFINEMENT 1 (approved) — the probe is EXPLORATORY, NOT pass/fail against a pre-chosen season.**
+Supplying a season at probe time ("elephant in the dry season") is the wolf error one step earlier —
+deciding the setting, then asking if it exists. So: **no season/habitat/time is supplied as an
+expectation at probe time; SPECIES and WILD are the only identity axes checked.** The gate instead
+**OBSERVES and reports** each clip's season / habitat / time-of-day / shot-type as free labels, and the
+probe aggregates the **DISTRIBUTION** (with depth per bucket) across the wild-and-correct-species pool.
+The **FEASIBLE/MARGINAL/INFEASIBLE verdict is computed on wild-and-correct-species YIELD ALONE**; the
+setting distribution is reported ALONGSIDE it as the raw material the script will be written to. An
+elephant pool that is overwhelmingly dry-season waterhole midday is not a failure — **that is the film,
+and the script gets written to it.** This is what footage-led means.
+
+`probe_feasibility(subject, *, providers, llm, sample_n≈10)` (per PLAN_FOOTAGE_LED Item 4 + SPECIFY-1):
+- Search the subject (season-agnostic queries); measure **pool depth E** (eligible after negative +
+  must-term + threshold); vision-gate a sample of `min(E, 10)` on **species + wild only**; compute the
+  **species / wild pass rates**, the **wild-and-correct-species yield** `Y = p × E`, and the verdict:
+  **FEASIBLE Y ≥ 20 · MARGINAL 12 ≤ Y < 20 · INFEASIBLE Y < 12** (Σn_min=12, Σn_target×1.25=20).
+- Report the **setting DISTRIBUTION** over the passing clips: season {snow:n, dry:n, wet:n, unclear:n},
+  habitat, time-of-day, shot-type — the raw material for footage-led scripting.
+- With the morphology definitions removed from the prompt (Part 1), **`definition_echo` is RETIRED**
+  (nothing is handed to recite); the **clip-echo** (near-identical features across DIFFERENT verdicts)
+  and **contradiction** self-checks remain and are reported.
+- Run on the **four approved subjects**; report per subject the above + FEASIBLE/MARGINAL/INFEASIBLE.
+- Encode `footage-feasibility-standard.md` (wolf = known-bad; lion savanna = known-good) — a required
+  PRE-SCRIPTING stage; later feeds Slice 6's playbook.
+
+**REFINEMENT 2 (approved) — probe all four, but RANK only the three TERRESTRIAL subjects for film #2.**
+Humpback footage is largely aerial-drone/underwater — different grade, motion and shot grammar, against
+a density standard tuned entirely on terrestrial cuts. If film #2 were the whale, a problem could be
+feasibility OR the assembler meeting water for the first time and we could not tell which. So the whale
+is probed for DATA but **excluded from the film-#2 ranking**; it becomes the **Phase-2 cross-biome
+generalisation test**, run deliberately as that question, never smuggled in as film #2. Film #2 is
+chosen from **elephant / giraffe / zebra** on the probe data.
 
 ## Part 3 — Only a FEASIBLE subject earns a script (then the full documentary-standard slice)
 Once a subject returns FEASIBLE, write a **footage-led** script to what the probe ACTUALLY found (its
