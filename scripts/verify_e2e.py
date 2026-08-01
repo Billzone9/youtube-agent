@@ -115,8 +115,8 @@ async def run():
         check("binder made a 3-clip beat (distinct srcs)",
               len(spec.beats[0].clips) == 3 and len({c.src for c in spec.beats[0].clips}) == 3)
         rep = assert_visual_density(spec, {"beat1": 30.0})
-        check("density gate PASSES a 3-clip 30s beat, shots ≤15s",
-              rep["beat1"]["clips"] == 3 and rep["beat1"]["shot_s"] <= 15.0, f"shot {rep['beat1']['shot_s']}s")
+        check("density gate PASSES a 3-clip 30s beat (~10s shots, no long-hold flag)",
+              rep["beat1"]["clips"] == 3 and not rep["beat1"]["long_hold"], f"shot {rep['beat1']['shot_s']}s")
         dst = os.path.join(work, "master.mp4")
         res = assemble_spec(spec, dst=dst, workdir=work)
         p = probe(dst)
@@ -126,13 +126,20 @@ async def run():
         check("NOISE gate PASS (48kHz, clean)", res.noise_gate.ok,
               f"sr={res.noise['sample_rate']} >16k={res.noise['hi16k_db']}")
 
-        print("[B] density gate rejects sparse / reused cuts")
+        print("[B] density gate: HARD FLOOR (no 1-clip beat) + long-hold FLAG (reconciled to the lion)")
         one = bind_edit_spec(_script([(1, "B1")]), {1: [clips[0]]}, {1: n1}, target=TGT)
         try:
             assert_visual_density(one, {"beat1": 30.0})
-            check("a 1-clip 30s beat is REJECTED (no clip held >15s)", False, "did NOT raise")
+            check("a 1-clip 30s beat is REJECTED (hard floor: no clip carries a beat)", False, "did NOT raise")
         except VisualDensityError as e:
-            check("a 1-clip 30s beat is REJECTED (no clip held >15s)", True, str(e)[:52])
+            check("a 1-clip 30s beat is REJECTED (hard floor: no clip carries a beat)", True, str(e)[:52])
+        # reconciled lion density: a 2-clip 40s beat (≈20s shots) PASSES but is FLAGGED for review
+        n40 = _mp3(work, "n40.mp3", 40)
+        two = bind_edit_spec(_script([(1, "B1")]), {1: [clips[0], clips[1]]}, {1: n40}, target=TGT)
+        rep2 = assert_visual_density(two, {"beat1": 40.0})
+        check("a 2-clip 40s beat PASSES at lion density (≥2 clips), FLAGGED as a long hold",
+              rep2["beat1"]["clips"] == 2 and rep2["beat1"]["long_hold"] and "_long_holds" in rep2,
+              f"shot {rep2['beat1']['shot_s']}s")
         reused = bind_edit_spec(_script([(1, "B1"), (2, "B2")]),
                                 {1: [clips[0], clips[1], clips[2]], 2: [clips[0], clips[1], clips[2]]},
                                 {1: n1, 2: n1}, target=TGT)

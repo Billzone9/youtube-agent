@@ -52,6 +52,14 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   label (→ INCONCLUSIVE), not the underlying zero verified clips.** Root-cause when the detector is next
   touched; not worth chasing now.
 
+## Feasibility search reach (from the elephant slice, 2026-08-01 — do not act now)
+- `[ ]` **Improve search reach so pool depth E is trustworthy.** The broadened re-probe barely moved
+  elephant (22→24) and made zebra WORSE (8→3) — E reflects our query construction + must-term + rank
+  threshold + provider RATE-LIMITING, not library depth (24 wild elephants is absurdly low). Fix: deeper
+  pagination, looser/OR must-term matching, rate-limit-aware pacing across queries, maybe more providers.
+- `[ ]` **Re-probe the elephant once search reach is fixed** to get a TRUE pool depth (the current
+  FEASIBLE stands on Y=24, an understated floor — the real yield is higher).
+
 ## Known defect — species discrimination WITHIN a family is unproven (from the feasibility slice, 2026-08)
 - `[ ]` **BLOCKER before any look-alike subject (leopard/cheetah, small cats, most raptors).** Removing
   the morphology definitions fixed over-strictness, but the definition-free gate now reads the old coyote
