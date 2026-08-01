@@ -161,6 +161,25 @@ async def run():
         except produce.ProductionError as e:
             check("produce raised ProductionError on NoMatch", True, str(e)[:52])
         check("TTS was NEVER called (no spend before a full source set)", tts.calls == 0)
+
+        print("[D] WORDLESS beat (cold open) end-to-end — declared duration, silence audio, no narration")
+        wl = Script(title="Cold Open", runtime_target_s=30, word_target=60, facts_used=(Fact("x", True),),
+                    beats=(Beat(1, "Before the first word", "wide establishing dawn", "", 8),   # vo="" → wordless
+                           Beat(2, "B2", "grey wolf", "The wolf moves through the snow.", 20)))
+        clips2 = [_asset(_clip(work, i, 10)) for i in range(3, 6)]      # 3 more DISTINCT clips
+        wn2 = _mp3(work, "wn2.mp3", 20)
+        wspec = bind_edit_spec(wl, {1: clips, 2: clips2}, {2: wn2}, target=TGT)   # beat1 absent → wordless
+        check("binder made beat1 WORDLESS (no narration, declared 8s)",
+              wspec.beats[0].narration is None and wspec.beats[0].duration == 8.0)
+        rep = assert_visual_density(wspec)                             # uses the declared 8s length
+        check("density gate handles the wordless beat on its declared length", "beat1" in rep)
+        wdst = os.path.join(work, "wmaster.mp4")
+        wres = assemble_spec(wspec, dst=wdst, workdir=work)
+        wp = probe(wdst)
+        check("wordless-beat master assembles WITH audio (no crash on empty narration)", wp["has_audio"] is True)
+        check("master duration = declared cold-open + narration − overlap (~27s)",
+              abs(wp["duration"] - 27.2) <= 1.6, f"{wp['duration']:.1f}s")
+        check("wordless-beat noise gate PASS (silence is clean)", wres.noise_gate.ok)
     finally:
         await conn.close()
 

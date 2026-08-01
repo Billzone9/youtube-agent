@@ -83,7 +83,9 @@ def _length(spec, beat, narration_s: dict | None) -> float:
         return float(narration_s[beat.name])
     if beat.narration:
         return float(ffmpeg.probe(spec.resolve(beat.narration))["duration"])
-    raise VisualDensityError(f"beat {beat.name!r}: no narration to measure beat length against")
+    if beat.duration:                                 # WORDLESS beat (cold open) — declared, not measured
+        return float(beat.duration)
+    raise VisualDensityError(f"beat {beat.name!r}: no narration or declared duration to measure against")
 
 
 def assert_visual_density(spec, narration_s: dict | None = None, *, motif_srcs: set | None = None) -> dict:

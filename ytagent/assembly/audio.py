@@ -10,20 +10,33 @@ from . import ffmpeg
 
 
 def build_beat_audio(spec, beat, dst: str) -> str:
-    """One beat's audio. Narration-only (no music) → the narration at 48 kHz stereo (the master
-    `join_prebaked` loudnorm does the −14 LUFS + aresample=48k). With music → the ducked mix via
-    `rebuild_beat_audio`. Duration = the narration length (authoritative for the beat)."""
-    if beat.music:
-        return rebuild_beat_audio(spec, beat, dst)
-    if not beat.narration:
-        raise ValueError(f"beat {beat.name!r} has no narration to build audio from")
+    """One beat's audio. Narration+music → the ducked mix (`rebuild_beat_audio`). Narration-only → the
+    narration at 48 kHz stereo. WORDLESS beat (a cold open, no narration): score/ambience only with NO
+    ducking (nothing to duck under), or pure silence if there is no music either — its length is the
+    beat's declared `duration`. The master `join_prebaked` loudnorm does the −14 LUFS + aresample=48k."""
     tgt = spec.target
-    narr = spec.resolve(beat.narration)
-    args = [
-        "-i", narr,
-        "-af", "aformat=sample_rates=48000:channel_layouts=stereo",
-        "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr),
-    ]
+    if beat.narration and beat.music:
+        return rebuild_beat_audio(spec, beat, dst)
+    if beat.narration:
+        args = ["-i", spec.resolve(beat.narration),
+                "-af", "aformat=sample_rates=48000:channel_layouts=stereo",
+                "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr)]
+        return ffmpeg.run(args, dst=dst)
+
+    # WORDLESS beat — no narration; use the declared duration
+    dur = float(beat.duration or 0.0)
+    if dur <= 0:
+        raise ValueError(f"beat {beat.name!r}: wordless beat needs a declared duration")
+    if beat.music:                                   # score/ambience only, no ducking
+        music = spec.resolve(beat.music.file)
+        fc = (f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={beat.music.in_db}dB,"
+              f"atrim=0:{dur:.3f},asetpts=N/SR/TB[aout]")
+        args = ["-stream_loop", "-1", "-t", f"{dur:.3f}", "-i", music, "-filter_complex", fc,
+                "-map", "[aout]", "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr)]
+        return ffmpeg.run(args, dst=dst)
+    # pure silence of the declared length (score can be layered by the master audio finish later)
+    args = ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", f"anullsrc=r={tgt.asr}:cl=stereo",
+            "-c:a", tgt.acodec, "-b:a", f"{tgt.abitrate_k}k", "-ar", str(tgt.asr)]
     return ffmpeg.run(args, dst=dst)
 
 

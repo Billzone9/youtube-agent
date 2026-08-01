@@ -34,8 +34,12 @@ def bind_edit_spec(script, sourced: dict, narration: dict, *, target: Target | N
             clip = to_clip(a, approx_seconds=b.approx_seconds, cap=len(assets) == 1)
             clips.append(dc_replace(clip, src=os.path.abspath(clip.src)))   # location-independent
         trans = None if i == n - 1 else Transition(type="xfade", curve="fade", duration=0.8)
+        # WORDLESS beat (a cold open): no narration mp3 → carry an EXPLICIT declared duration so the
+        # fitter/density/audio use it instead of a measured narration length.
+        narr = narration.get(b.index)
         beats.append(Beat(name=f"beat{b.index}", clips=tuple(clips),
-                          narration=os.path.abspath(narration[b.index]), music=None,
+                          narration=os.path.abspath(narr) if narr else None,
+                          duration=None if narr else float(b.approx_seconds), music=None,
                           out_transition=trans))
     return EditSpec(
         id=_slug(getattr(script, "title", "video")), source="clips", targets={tgt.fmt: tgt},

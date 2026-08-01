@@ -40,9 +40,14 @@ def _build_from_clips(spec, dst: str, workdir: str) -> str:
     tag = spec.active_format.replace(":", "x")
     beat_paths = []
     for b in spec.beats:
-        if not b.narration:
-            raise ValueError(f"beat {b.name!r}: clips path needs narration (its duration drives the beat)")
-        ndur = ffmpeg.probe(spec.resolve(b.narration))["duration"]
+        # a WORDLESS beat (cold open) carries an explicit declared duration; otherwise the narration
+        # length drives the beat. One or the other must be present.
+        if b.narration:
+            ndur = ffmpeg.probe(spec.resolve(b.narration))["duration"]
+        elif b.duration:
+            ndur = float(b.duration)
+        else:
+            raise ValueError(f"beat {b.name!r}: clips path needs narration or a declared duration")
         vid = os.path.join(workdir, f"{tag}_{b.name}_v.mp4")
         aud = os.path.join(workdir, f"{tag}_{b.name}_a.m4a")
         av = os.path.join(workdir, f"{tag}_{b.name}.mp4")

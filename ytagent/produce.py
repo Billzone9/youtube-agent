@@ -220,6 +220,8 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
         narration = {}
         for b in script.beats:
             text = narration_texts[f"beat{b.index}"]
+            if not text.strip():          # WORDLESS beat (cold open) — no TTS call, no spend, no empty
+                continue                  # synth; the binder treats a missing narration as wordless
             ndst = os.path.join(workdir, f"narr_beat{b.index}.mp3")
             r = await asyncio.to_thread(tts.synthesize, text, voice_id=voice_id, dst=ndst, model=model)
             g = aqc.check_source_clean(r.path)
@@ -263,7 +265,10 @@ async def remake_from_narration(conn, notifier, *, channel, topic, script, narra
     os.makedirs(workdir, exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     pricing = await repo.ledger.get_llm_pricing(conn)
-    lengths = {b.index: float(probe(narration_paths[b.index])["duration"]) for b in script.beats}
+    # wordless beats (no narration path) use their declared approx_seconds, not a measured length
+    lengths = {b.index: (float(probe(narration_paths[b.index])["duration"])
+                         if narration_paths.get(b.index) else float(b.approx_seconds))
+               for b in script.beats}
 
     async with conn.transaction():
         job = await repo.jobs.create(conn, channel_id=channel["id"], type="remake",

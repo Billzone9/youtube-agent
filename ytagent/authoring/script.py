@@ -24,6 +24,7 @@ _MAX_RETRIES = 2
 _WPM_TARGET = 130         # calm, unhurried narration — the house pace (see house-voice-standard.md)
 _WPM_MAX = 140            # enforced per-beat upper bound; faster than this reads hurried
 _RUNTIME_TOLERANCE = 1.15  # overall runtime may exceed target by up to this (else regenerate)
+_PAUSE_S = 1.8            # each *(beat)* pause marker ≈ this many seconds of SILENCE (not spoken time)
 _STAGE_DIR = re.compile(r"\*\([^)]*\)\*|\([^)]*\)")   # *(beat)* and bare (stage direction) — NOT spoken
 _BEAT_LABEL_PREFIX = re.compile(r"^\s*beat\s*\d+\s*[—:\-]\s*", re.I)   # a model-echoed "Beat N —" prefix
 
@@ -38,17 +39,26 @@ def _spoken(vo: str) -> str:
     return re.sub(r"\s+", " ", _STAGE_DIR.sub("", vo)).strip()
 
 
+def _spoken_seconds(vo: str, approx_seconds: float) -> float:
+    """The seconds the words are actually SPOKEN — the beat length minus its pause markers. Pace must be
+    words-over-SPOKEN-seconds, not words-over-total-beat-seconds: otherwise a rushed beat padded with
+    declared *(beat)* pauses reads as slow and the cap is satisfied by the padding, not by real pace."""
+    pauses = len(_STAGE_DIR.findall(vo or ""))
+    return max(float(approx_seconds) - pauses * _PAUSE_S, 0.0)
+
+
 def _pacing_violations(beats_raw: list[dict]) -> list[tuple[int, float, int, int]]:
-    """Beats whose spoken VO exceeds the pace cap: (index, wpm, word_budget, approx_seconds)."""
+    """Beats whose spoken VO exceeds the pace cap, judged on SPOKEN seconds (pauses excluded):
+    (index, wpm, word_budget, spoken_seconds)."""
     bad: list[tuple[int, float, int, int]] = []
     for i, b in enumerate(beats_raw):
-        sec = int(b.get("approx_seconds", 0) or 0)
-        if sec <= 0:
-            continue
         spoken = len(_spoken(b.get("vo", "")).split())
+        sec = _spoken_seconds(b.get("vo", ""), int(b.get("approx_seconds", 0) or 0))
+        if sec <= 0 or spoken == 0:                   # a wordless beat (a cold open) has no pace to cap
+            continue
         wpm = spoken / (sec / 60)
         if wpm > _WPM_MAX:
-            bad.append((i, wpm, int(sec / 60 * _WPM_MAX), sec))
+            bad.append((i, wpm, int(sec / 60 * _WPM_MAX), int(sec)))
     return bad
 
 

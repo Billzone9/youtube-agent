@@ -88,6 +88,8 @@ class Beat:
     music: MusicCue | None = None
     clips: tuple[Clip, ...] = ()
     out_transition: Transition | None = None
+    duration: float | None = None        # EXPLICIT beat length for a WORDLESS beat (a cold open) — used
+    #                                      when there is no narration to measure (score/ambience only)
 
 
 @dataclass(frozen=True)
