@@ -25,17 +25,27 @@ _TOPIC = ("the African elephant — the matriarch and her herd on the old paths 
           "the long walk to water, memory carried across generations, the calves learning the route, "
           "and the herd moving through the low golden light of morning and evening")
 
-# The footage IN HAND (from the probe) is handed to the writer as research, so the script is written to
-# what exists rather than hoping for shots the library lacks.
+# The footage IN HAND (from the probe) + the DENSITY brief are handed to the writer as research, so the
+# script is written to what exists AND earns its length like the lion (not six ideas stretched thin).
 _FOOTAGE_BRIEF = (
-    "FOOTAGE IN HAND — write ONLY to what this pool contains; do not invent shots it lacks. "
-    "Available: African elephant, WILD (no captivity), DRY SAVANNA (some green flush), GOLDEN-HOUR "
-    "light dominant (dawn/dusk), mostly WIDE shots. Every SHOT-BRIEF must be satisfiable by wild "
-    "dry-savanna golden-hour elephant footage. FAVOUR shots with INTERNAL MOVEMENT — a herd crossing, "
-    "a calf running to keep up, dust kicked up in low sun, trunks and ears in motion, a matriarch "
-    "walking a line — over static portraits: at the house cutting rhythm each shot HOLDS ~20 seconds, "
-    "and a static clip held that long reads dead. STRUCTURE with breathers: a cold open on picture and "
-    "score before the first word, and a held beat-boundary pause where the music carries the image."
+    "FOOTAGE IN HAND — write ONLY to what this pool contains; do not invent shots it lacks. Available: "
+    "African elephant, WILD (no captivity), DRY SAVANNA (some green flush), GOLDEN-HOUR light dominant, "
+    "mostly WIDE shots. Every SHOT-BRIEF must be satisfiable by wild dry-savanna golden-hour elephant "
+    "footage, and must FAVOUR shots with INTERNAL MOVEMENT (a herd crossing, a calf running to keep up, "
+    "dust in low sun, trunks and ears in motion, a matriarch walking a line) over static portraits — at "
+    "this cutting rhythm each shot HOLDS ~20s and a static clip held that long reads dead.\n"
+    "DENSITY — match the LION exemplar (in the examples): the lion earned 801 words because it had SEVEN "
+    "distinct things to say and DEVELOPED EACH FULLY — a complete movement per beat. Every beat here must "
+    "likewise sustain ~120 words per minute across its SPOKEN seconds and DEVELOP ONE IDEA FULLY (a ~55s "
+    "beat carries ~100–120 spoken words). Do NOT pad or add pauses to fill time; DEVELOP. Give each beat "
+    "its full weight. The seven ideas, one per beat: (1) a SHORT 10–15s WORDLESS cold open — the herd "
+    "emerging, picture+score only; (2) the matriarch's leadership — the herd moves because she has "
+    "already chosen; (3) the OLD ROUTES — paths walked across generations, unmarked yet carried; (4) "
+    "WATER MEMORY — she holds in memory the water sources of decades, dry and found again; (5) the CALVES "
+    "learning the route by walking it, knowledge absorbed not taught; (6) how the herd COMMUNICATES and "
+    "moves — infrasonic rumbles felt more than heard, the unhurried precision of the crossing; (7) the "
+    "CLOSE — evening light, the herd receding, what is carried forward. Put the reverent breathing at "
+    "BEAT BOUNDARIES (the score carries the transition), not all in the cold open."
 )
 
 
@@ -59,7 +69,7 @@ async def main():
     try:
         channel = await repo.channels.get_by_slug(conn, "wildlife")
         script = writer.write(topic=_TOPIC, channel=channel, research=_FootageResearch(),
-                              runtime_target_s=380, n_beats=7)
+                              runtime_target_s=394, n_beats=7)   # match the lion benchmark (6:34)
         pricing = await repo.ledger.get_llm_pricing(conn)
         spent = await repo.ledger.drain_dev_usage(conn, sink, pricing, context="production")
     finally:
@@ -74,13 +84,38 @@ async def main():
                    "facts_used": [dataclasses.asdict(f) for f in script.facts_used],
                    "provenance": script.provenance}, fh, indent=2)
 
+    from ytagent.authoring.script import _WPM_MIN, _spoken, _spoken_seconds
     print(f"TITLE: {script.title}   ({len(script.beats)} beats, {script.word_count} spoken words, "
           f"target {script.runtime_target_s}s)\n")
     for b in script.beats:
-        print(f"── beat{b.index}  “{b.label}”   (~{b.approx_seconds}s, {b.spoken_words} words, {b.wpm:.0f} wpm)")
+        print(f"── beat{b.index}  “{b.label}”   (~{b.approx_seconds}s)")
         print(f"   SHOT: {b.shot_brief}")
         print(f"   VO:   {b.vo}\n")
-    print("FACTS USED (accuracy block):")
+
+    # VERIFY on the FIXED denominator (spoken words / SPOKEN seconds), vs the lion benchmark
+    print("PER-BEAT DENSITY CHECK (spoken words / spoken seconds → wpm; floor ≥110):")
+    tot_words = tot_spoken_s = 0
+    weak = []
+    for b in script.beats:
+        w = len(_spoken(b.vo).split())
+        ssec = _spoken_seconds(b.vo, b.approx_seconds)
+        wpm = w / (ssec / 60) if ssec > 0 else 0.0
+        tot_words += w
+        tot_spoken_s += ssec
+        wordless = (w == 0)
+        flag = "  [WORDLESS cold open]" if wordless else ("  ⚠ UNDER-WRITTEN" if wpm < _WPM_MIN else "")
+        if not wordless and wpm < _WPM_MIN:
+            weak.append(b.index)
+        print(f"   beat{b.index}: {w:3} words | {ssec:5.1f}s spoken | {wpm:5.0f} wpm{flag}")
+    rt = sum(b.approx_seconds for b in script.beats)
+    film_wpm = tot_words / (tot_spoken_s / 60) if tot_spoken_s else 0
+    print(f"\nFILM: {tot_words} spoken words | {rt}s runtime ({rt/60:.1f} min) | "
+          f"{film_wpm:.0f} wpm on spoken time")
+    print(f"LION: 801 spoken words | 394s (6:34) | 122 wpm  ← the benchmark")
+    print(f"→ elephant is {tot_words/801*100:.0f}% of the lion's words; "
+          + ("ALL BEATS ≥110 wpm — dense enough" if not weak
+             else f"UNDER-WRITTEN beats: {weak} — regenerate before shipping"))
+    print("\nFACTS USED (accuracy block):")
     for f in script.facts_used:
         print(f"   [{'established' if f.established else 'FLAG'}] {f.claim}")
     print(f"\nsaved → {out}/script.json   |   script LLM spend ledgered: £{spent:.4f}")

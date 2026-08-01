@@ -23,6 +23,8 @@ from .tells import TELLS_THRESHOLDS_VERSION, scan_tells
 _MAX_RETRIES = 2
 _WPM_TARGET = 130         # calm, unhurried narration — the house pace (see house-voice-standard.md)
 _WPM_MAX = 140            # enforced per-beat upper bound; faster than this reads hurried
+_WPM_MIN = 110            # per-beat LOWER bound on SPOKEN pace — below this a beat is under-written (too
+#                           few words for its length: the elephant's thin-script failure). Wordless exempt.
 _RUNTIME_TOLERANCE = 1.15  # overall runtime may exceed target by up to this (else regenerate)
 _PAUSE_S = 1.8            # each *(beat)* pause marker ≈ this many seconds of SILENCE (not spoken time)
 _STAGE_DIR = re.compile(r"\*\([^)]*\)\*|\([^)]*\)")   # *(beat)* and bare (stage direction) — NOT spoken
@@ -59,6 +61,22 @@ def _pacing_violations(beats_raw: list[dict]) -> list[tuple[int, float, int, int
         wpm = spoken / (sec / 60)
         if wpm > _WPM_MAX:
             bad.append((i, wpm, int(sec / 60 * _WPM_MAX), int(sec)))
+    return bad
+
+
+def _underwritten(beats_raw: list[dict]) -> list[tuple[int, float, int, int]]:
+    """Beats that DON'T EARN their length — spoken pace below `_WPM_MIN`, i.e. too few words developing
+    the idea across the beat's spoken seconds (the elephant's thin-script failure). A WORDLESS beat (a
+    cold open, 0 words) is intentional and exempt. (i, wpm, min_words_for_its_seconds, spoken_seconds)."""
+    bad: list[tuple[int, float, int, int]] = []
+    for i, b in enumerate(beats_raw):
+        spoken = len(_spoken(b.get("vo", "")).split())
+        sec = _spoken_seconds(b.get("vo", ""), int(b.get("approx_seconds", 0) or 0))
+        if spoken == 0 or sec < 8:                    # wordless / trivially short beats are exempt
+            continue
+        wpm = spoken / (sec / 60)
+        if wpm < _WPM_MIN:
+            bad.append((i, wpm, int(sec / 60 * _WPM_MIN), int(sec)))
     return bad
 
 
@@ -123,7 +141,36 @@ def _extract_json(text: str) -> dict:
     start, end = s.find("{"), s.rfind("}")
     if start == -1 or end == -1:
         raise ValueError(f"no JSON object in model output: {text[:200]!r}")
-    return json.loads(s[start:end + 1])
+    blob = s[start:end + 1]
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError:
+        return json.loads(_repair_json(blob))     # light repair for the common long-output glitches
+
+
+def _repair_json(blob: str) -> str:
+    """Best-effort repair of the two failures long VO strings cause: raw newlines/tabs inside a string
+    (JSON forbids them) and a trailing comma before } or ]. Walk the text tracking whether we're inside
+    a string, and escape literal control chars there; then drop trailing commas."""
+    out, in_str, esc = [], False, False
+    for ch in blob:
+        if esc:
+            out.append(ch)
+            esc = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            out.append(ch)
+            continue
+        if in_str and ch in "\n\r\t":
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+            continue
+        out.append(ch)
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))   # drop trailing commas
 
 
 def _rules(runtime_s: int, words: int, n_beats: int) -> str:
@@ -181,19 +228,28 @@ class ScriptWriter:
 
         # Regenerate on an AI-tell flag, a per-beat pacing overrun, OR an overall-runtime overrun —
         # all break the calm register; same bounded-retry pattern for each.
-        data, tell_report, pacing, runtime_bad = None, None, [], None
+        data, tell_report, pacing, runtime_bad, thin = None, None, [], None, []
         for _ in range(_MAX_RETRIES + 1):
             resp = self._p.complete(LLMRequest(
                 tier=ModelTier.QUALITY, system=style.system_prefix(_rules(runtime_target_s, words, n_beats)),
-                messages=({"role": "user", "content": user},), max_tokens=2000, purpose="script",
-                channel_id=channel.get("id"),
+                messages=({"role": "user", "content": user},), max_tokens=6000, purpose="script",
+                channel_id=channel.get("id"),   # headroom: a dense 7-beat script + briefs + facts as JSON
             ))
-            data = _extract_json(resp.text)
+            try:
+                data = _extract_json(resp.text)
+            except (ValueError, json.JSONDecodeError):     # malformed JSON → re-prompt (bounded), don't crash
+                user += ("\nYour previous reply was not valid JSON. Return STRICT, valid JSON only — one "
+                         "object, all strings double-quoted with any inner quotes/newlines escaped, no "
+                         "trailing commas, no prose outside the object.")
+                if data is None:
+                    continue
+                break
             beats_raw = data.get("beats", [])
             tell_report = scan_tells(" ".join(_spoken(b.get("vo", "")) for b in beats_raw))
             pacing = _pacing_violations(beats_raw)
+            thin = _underwritten(beats_raw)
             runtime_bad = _runtime_violation(beats_raw, runtime_target_s)
-            if not tell_report.flagged and not pacing and not runtime_bad:
+            if not tell_report.flagged and not pacing and not thin and not runtime_bad:
                 break
             problems = []
             if tell_report.flagged:
@@ -203,15 +259,24 @@ class ScriptWriter:
                     f"too fast (keep ≤{_WPM_MAX} wpm) — " + "; ".join(
                         f"beat {i + 1} at {w:.0f} wpm, trim to ≤{bud} spoken words for its {sec}s"
                         for i, w, bud, sec in pacing))
+            if thin:
+                problems.append(
+                    f"UNDER-WRITTEN (develop the idea more fully to ≥{_WPM_MIN} wpm of speech, do NOT pad "
+                    "or add pauses) — " + "; ".join(
+                        f"beat {i + 1} at only {w:.0f} wpm, needs ≥{bud} spoken words for its {sec}s of speech"
+                        for i, w, bud, sec in thin))
             if runtime_bad:
                 tot_s, tot_w = runtime_bad
                 problems.append(
                     f"over the runtime budget — {tot_s}s / {tot_w} spoken words vs ~{runtime_target_s}s "
                     f"/ ~{words} words target; REMOVE or shorten beats (do not add beats to fit words)")
             user += ("\nYour previous draft had problems: " + " | ".join(problems)
-                     + ". Rewrite: keep the calm pace and the deliberate *(beat)* pauses, SHORTEN "
-                       "over-long beats rather than speeding up, and stay within the runtime budget.")
+                     + ". Rewrite: keep the calm pace and the deliberate *(beat)* pauses; DEVELOP each "
+                       "beat's idea fully rather than padding; SHORTEN over-long beats rather than "
+                       "speeding up; stay within the runtime budget.")
 
+        if not data:                                  # every attempt returned unparseable JSON
+            raise ValueError("script generation failed: the model never returned valid JSON")
         beats = tuple(
             Beat(index=i + 1, label=_clean_label(b.get("label", "")), shot_brief=b.get("shot_brief", ""),
                  vo=b.get("vo", ""), approx_seconds=int(b.get("approx_seconds", 0) or 0))
