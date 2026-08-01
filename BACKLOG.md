@@ -52,6 +52,12 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   label (→ INCONCLUSIVE), not the underlying zero verified clips.** Root-cause when the detector is next
   touched; not worth chasing now.
 
+## Small robustness (from the elephant slice, 2026-08-01)
+- `[ ]` **ScriptWriter JSON extraction is fragile.** `_extract_json` failed on one elephant generation
+  (unescaped char in a long VO → JSONDecodeError propagated; the retry loop only re-runs on AI-tell /
+  pacing / runtime, not on a parse error). A re-run succeeded. Fix: catch the parse error inside the
+  bounded retry loop (re-prompt "return STRICT valid JSON"), and/or a light JSON repair pass.
+
 ## Feasibility search reach (from the elephant slice, 2026-08-01 — do not act now)
 - `[ ]` **Improve search reach so pool depth E is trustworthy.** The broadened re-probe barely moved
   elephant (22→24) and made zebra WORSE (8→3) — E reflects our query construction + must-term + rank
