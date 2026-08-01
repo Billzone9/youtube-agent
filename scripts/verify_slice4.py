@@ -64,9 +64,9 @@ class FakeProvider:
     def name(self): return "fake"
     def rate_limit(self): return {}
     async def healthcheck(self): return True
-    async def search(self, query, *, orientation, min_duration, per_page=15):
+    async def search(self, query, *, orientation, min_duration, per_page=15, page=1):
         self.searches += 1
-        return list(self._cands)
+        return list(self._cands) if page == 1 else []       # canned pool lives on page 1 only
 
 
 async def run() -> None:

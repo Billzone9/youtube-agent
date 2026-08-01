@@ -44,13 +44,14 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
 ## Known defect (log, do not chase)
-- `[ ]` **Contradiction detector — unreconciled false-fire.** The clean wolf Stage-1 run logged 2
-  `sourcing.vision_contradiction` events on clips 27367 and 57275, both with `species=clear_match` and
-  `features_indicate="Grey wolf"`. Reproducing the detector on that exact input returns
-  `contradiction=False`, so the stored flag is unexplained (likely a cross-beat state issue — 27367 read
-  clear_match in beat1 but clear_mismatch in beat2 on the same frames). It **changed the mechanical
-  label (→ INCONCLUSIVE), not the underlying zero verified clips.** Root-cause when the detector is next
-  touched; not worth chasing now.
+- `[x]` **Contradiction detector — false-fire — FIXED 2026-08-01.** The false-fire came from the
+  `names_other` branch (`features_indicate` names something other than the subject, yet species
+  accepts → flagged). When the film subject wasn't propagated into `Expect.subject` (scene-only briefs
+  set it to 'herd'/'savanna'), the gate's correct `features_indicate="African elephant"` vs an
+  `expect.subject` of 'herd' tripped it on every accepted clip (3–4/run). Dropped the branch:
+  `contradiction = _indicates_subject(features_indicate, subject_noun) and species == CLEAR_MISMATCH`
+  only — the real "recites the subject then rejects it" signal. Regression `[4d]` in verify_curation;
+  the re-run logged **0 false-fires** (2 legitimate contradictions remained, on the kept branch).
 
 ## Small robustness (from the elephant slice, 2026-08-01)
 - `[ ]` **ScriptWriter JSON extraction is fragile.** `_extract_json` failed on one elephant generation
@@ -58,13 +59,28 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   pacing / runtime, not on a parse error). A re-run succeeded. Fix: catch the parse error inside the
   bounded retry loop (re-prompt "return STRICT valid JSON"), and/or a light JSON repair pass.
 
-## Feasibility search reach (from the elephant slice, 2026-08-01 — do not act now)
-- `[ ]` **Improve search reach so pool depth E is trustworthy.** The broadened re-probe barely moved
-  elephant (22→24) and made zebra WORSE (8→3) — E reflects our query construction + must-term + rank
-  threshold + provider RATE-LIMITING, not library depth (24 wild elephants is absurdly low). Fix: deeper
-  pagination, looser/OR must-term matching, rate-limit-aware pacing across queries, maybe more providers.
-- `[ ]` **Re-probe the elephant once search reach is fixed** to get a TRUE pool depth (the current
-  FEASIBLE stands on Y=24, an understated floor — the real yield is higher).
+## Feasibility search reach (from the elephant slice, 2026-08-01)
+- `[x]` **Search reach + structural depletion — FIXED 2026-08-01 (film-wide sourcing + allocation).**
+  Root cause of the elephant Stage-1 short (beats 3–7 returned 0 verified, surfacing muskox/woolly
+  sheep): scene-only briefs never name the animal, so `build_query_plan` extracted scene words
+  ('herd'/'savanna') into `must_terms` — an off-subject clip tagged 'herd' passed the rank filter, and
+  real elephants were never reached. Fixes: (1) `build_query_plan(subject=…)` FORCES the film subject
+  into `must_terms` AND every query (`_enforce_subject`); (2) NEW `source_film()` gathers ONE film-wide
+  verified pool (union of all beats' subject-anchored queries) then ALLOCATES to beats by fit — no
+  earlier beat starves a later one (fixes the structural depletion); (3) real pagination (`page` on the
+  providers + `_search_all`, `per_page=50`, `pages=2`). Wired into BOTH Stage-1 curation and the render
+  path (`_source_all_beats`). Re-run: **all 7 beats PASS** — pool 1731 candidates → 157 eligible → 90
+  verified → 52 clear + 6 reserve (32 gate-rejected incl. a lion and captive elephants) → 26 allocated.
+  The muskox/sheep are gone (they now score 0.0). Regression `[6]` in verify_curation.
+
+## Small robustness (from the film-wide elephant re-run, 2026-08-01)
+- `[ ]` **One vision verdict came back unparseable/malformed** (pexels 35023064) — handled safely
+  (defaulted to species+wild `clear_mismatch` → rejected, 1 of 90), but a malformed-JSON RETRY inside
+  `vision_check` (as ScriptWriter now does) would recover the clip instead of discarding it.
+- `[ ]` **`source_film` verify pass is slow** — `max_verify=90` × 3 Haiku frames each + downloads ran
+  ~45 min wall-clock (network/API latency, not CPU). The pool was plenty deep by ~40 clips. Tune:
+  early-stop once the clear pool comfortably exceeds Σ n_target (e.g. 1.5×), and/or cache vision
+  verdicts by asset_id so re-runs don't re-pay. Not blocking; the run completed and all beats passed.
 
 ## Known defect — species discrimination WITHIN a family is unproven (from the feasibility slice, 2026-08)
 - `[ ]` **BLOCKER before any look-alike subject (leopard/cheetah, small cats, most raptors).** Removing

@@ -152,23 +152,46 @@ def _enforce_season_majority(queries: tuple[str, ...], must: tuple[str, ...], se
     return tuple(final[:n])
 
 
-def build_query_plan(brief: str, *, approx_seconds: int, target_fmt: str, llm=None) -> QueryPlan:
+def _enforce_subject(queries: tuple[str, ...], head: str) -> tuple[str, ...]:
+    """Every query must carry the FILM SUBJECT term alongside its scene words — a scene-only brief
+    ('the herd crossing') otherwise surfaces the wrong animal (muskox/sheep). Same failure shape as
+    season-blind queries; the subject is the must-have, the scene words the refinement."""
+    out = [head] + [q if re.search(rf"\b{re.escape(head)}\b", q) else f"{head} {q}" for q in queries]
+    seen, final = set(), []
+    for q in out:
+        if q not in seen:
+            seen.add(q)
+            final.append(q)
+    return tuple(final[:4])
+
+
+def build_query_plan(brief: str, *, approx_seconds: int, target_fmt: str, llm=None,
+                     subject: str | None = None) -> QueryPlan:
+    """`subject`, when given, is the FILM's subject (e.g. 'african elephant') and OVERRIDES per-brief
+    subject extraction — the shot briefs are scene-heavy ('the herd', 'the column') and often never name
+    the animal, so the film subject must be forced into must_terms AND every query."""
     orientation = _ORIENT.get(target_fmt, "landscape")
     season = _axis_terms(brief, "season")
     habitat = _axis_terms(brief, "habitat")
     time_of_day = _axis_terms(brief, "time_of_day")
 
-    subject_phrase = ""
-    if llm is not None:
+    subject_phrase = subject or ""
+    if not subject and llm is not None:
         queries, subject_phrase = _llm_plan(brief, llm)
+    elif llm is not None:
+        queries, _ = _llm_plan(brief, llm)            # subject forced; still take the LLM's scene queries
     else:
         queries = ()
     if not queries:                       # no LLM, or the call failed → deterministic fallback
         queries = _keywords(brief)
 
     subject_tokens = tuple(w for w in _W.findall(subject_phrase.lower()) if len(w) > 2)
-    must = subject_tokens or _must_terms(queries)   # prefer the LLM subject; else the recurring token
-    queries = _enforce_season_majority(queries, must, season)
+    must = subject_tokens or _must_terms(queries)   # prefer the (film or LLM) subject; else recurring token
+    if subject and subject_tokens:                  # FORCE the subject head noun into every query + must
+        queries = _enforce_subject(queries, subject_tokens[-1])
+        must = subject_tokens
+    else:
+        queries = _enforce_season_majority(queries, must, season)
 
     return QueryPlan(queries=queries, orientation=orientation, min_seconds=int(approx_seconds or 0),
                      must_terms=must, subject=subject_phrase or (must[0] if must else ""),

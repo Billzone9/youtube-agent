@@ -43,8 +43,8 @@ class PixabayProvider:
             return False
 
     async def search(self, query: str, *, orientation: str, min_duration: int,
-                     per_page: int = 15) -> list[Candidate]:
-        params = {"key": self._key, "q": query, "video_type": "film",
+                     per_page: int = 15, page: int = 1) -> list[Candidate]:
+        params = {"key": self._key, "q": query, "video_type": "film", "page": max(1, page),
                   "per_page": max(3, per_page), "min_width": self._tw, "min_height": self._th}
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             r = await client.get(_BASE, params=params)

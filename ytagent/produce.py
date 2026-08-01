@@ -29,7 +29,7 @@ from .metadata.description import generate_description
 from .metadata.llm_writer import LLMWriter
 from .metadata.research import UnavailableResearch
 from .orchestrator import assembly_ping_text, submit_video_for_approval
-from .sourcing import NoMatch, source_clips_for_brief
+from .sourcing import NoMatch, source_clips_for_brief, source_film
 
 # ElevenLabs multilingual_v2 ≈ 1 credit/char; marginal GBP mirrors the lion-music baseline (£2/1500cr).
 _CREDITS_PER_CHAR = 1.0
@@ -52,33 +52,30 @@ async def _drain_llm(conn, sink, pricing, *, channel_id, job_id) -> float:
 
 
 async def _source_all_beats(conn, providers, script, *, channel_id, job_id, target_fmt, target_w,
-                            target_h, cache_dir, llm, length_of) -> dict:
-    """Source N DISTINCT clips for every beat (density standard), no clip reused video-wide. Any beat
+                            target_h, cache_dir, llm, length_of, subject) -> dict:
+    """FILM-WIDE sourcing + allocation: gather ONE verified pool for the whole film (the SUBJECT forced
+    into every beat's queries and into the vision gate), then allocate clips to beats by fit. Any beat
     that can't reach its minimum fails the WHOLE production (loud, before any TTS spend)."""
-    sourced, used, misses = {}, set(), []
-    for b in script.beats:
-        hint = length_of(b)
-        n_min = min_clips(hint)
-        n_tgt = max(target_clips(hint), n_min + 1)          # always try for headroom above the minimum
-        res = await source_clips_for_brief(
-            conn, providers, brief=b.shot_brief, brief_ref=f"{script.title[:24]}:beat{b.index}",
-            approx_seconds=int(hint), target_fmt=target_fmt, target_w=target_w, target_h=target_h,
-            cache_dir=cache_dir, channel_id=channel_id, job_id=job_id, llm=llm,
-            n_target=n_tgt, n_min=n_min, exclude_ids=used)
-        if isinstance(res, NoMatch):
-            misses.append(f"beat{b.index} ({res.reason})")
-        else:
-            sourced[b.index] = res
-            used |= {(a.source, a.asset_id) for a in res}
+    beats = [{"index": b.index, "label": b.label, "brief": b.shot_brief,
+              "approx_seconds": length_of(b), "n_min": min_clips(length_of(b)),
+              "n_target": max(target_clips(length_of(b)), min_clips(length_of(b)) + 1)}
+             for b in script.beats]
+    alloc, rep = await source_film(
+        conn, providers, subject=subject, beats=beats, target_fmt=target_fmt, target_w=target_w,
+        target_h=target_h, cache_dir=cache_dir, channel_id=channel_id, job_id=job_id, llm=llm)
+    misses = [f"beat{br['beat']} ({br['verified']}/{br['n_min']})"
+              for br in rep["beats"] if not br["reached_min"]]
     if misses:
         raise ProductionError(
-            "insufficient distinct footage for: " + "; ".join(misses) + " — the visual-density "
-            "standard needs multiple distinct clips per beat. Pick a better-covered topic or reshape "
-            "those beats. No TTS spent.")
+            "insufficient distinct footage for: " + "; ".join(misses) + f" — the film pool held "
+            f"{rep['clear']} clear clips ({rep['rejected']} rejected by the gate) across "
+            f"{rep['pool_candidates']} candidates. Pick a better-covered subject or reshape those "
+            "beats. No TTS spent.")
     await record_event(conn, "sourced",
-                       message=f"{sum(len(v) for v in sourced.values())} clips across {len(sourced)} beats",
+                       message=f"{rep['allocated_total']} clips across {len(alloc)} beats "
+                               f"(film pool {rep['clear']} clear of {rep['pool_candidates']})",
                        channel_id=channel_id, job_id=job_id)
-    return sourced
+    return alloc
 
 
 async def curate_report(conn, providers, script, *, channel_id, job_id=None, llm, target_fmt="16:9",
@@ -210,7 +207,7 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
         sourced = await _source_all_beats(
             conn, providers, script, channel_id=channel["id"], job_id=jid, target_fmt=target_fmt,
             target_w=target_w, target_h=target_h, cache_dir=cache_dir, llm=llm_provider,
-            length_of=lambda b: b.approx_seconds or 30)
+            length_of=lambda b: b.approx_seconds or 30, subject=topic)
 
         # 3) TTS ALL beats (spend) — each narration gated for noise before the render
         if tts is None or not voice_id:

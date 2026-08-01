@@ -20,23 +20,29 @@ from .query import build_query_plan
 from .rank import MATCH_THRESHOLD, rank_candidates
 
 
-async def _search_all(providers, plan, conn, channel_id) -> dict[tuple[str, str], tuple[Candidate, str]]:
-    """{(source, asset_id): (candidate, query_that_found_it)} — deduped across providers × queries."""
+async def _search_all(providers, plan, conn, channel_id, *, per_page: int = 15, pages: int = 1
+                      ) -> dict[tuple[str, str], tuple[Candidate, str]]:
+    """{(source, asset_id): (candidate, query_that_found_it)} — deduped across providers × queries ×
+    pages. `pages`>1 walks the provider pagination (film-wide reach); a page returning nothing stops
+    that query's paging early (no wasted calls past the tail)."""
     seen: dict[tuple[str, str], tuple[Candidate, str]] = {}
     for prov in providers:
         for q in plan.queries:
-            try:
-                cands = await prov.search(q, orientation=plan.orientation,
-                                          min_duration=plan.min_seconds)
-            except Exception as e:  # noqa: BLE001 — a failed search shouldn't kill the run
-                await record_event(conn, "sourcing.search_error", message=f"{prov.name()} '{q}': {e}",
-                                   channel_id=channel_id)
-                continue
-            await record_event(conn, "sourcing.search",
-                               message=f"{prov.name()} '{q}' → {len(cands)}",
-                               channel_id=channel_id, data={"remaining": prov.rate_limit()})
-            for c in cands:
-                seen.setdefault((c.source, c.asset_id), (c, q))
+            for page in range(1, max(1, pages) + 1):
+                try:
+                    cands = await prov.search(q, orientation=plan.orientation,
+                                              min_duration=plan.min_seconds, per_page=per_page, page=page)
+                except Exception as e:  # noqa: BLE001 — a failed search shouldn't kill the run
+                    await record_event(conn, "sourcing.search_error",
+                                       message=f"{prov.name()} '{q}' p{page}: {e}", channel_id=channel_id)
+                    break
+                await record_event(conn, "sourcing.search",
+                                   message=f"{prov.name()} '{q}' p{page} → {len(cands)}",
+                                   channel_id=channel_id, data={"remaining": prov.rate_limit()})
+                for c in cands:
+                    seen.setdefault((c.source, c.asset_id), (c, q))
+                if not cands:                                # past the tail — stop paging this query
+                    break
     return seen
 
 
@@ -135,6 +141,7 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                                  n_target: int, n_min: int, exclude_ids: set | None = None,
                                  vision: bool = True, required_axes: frozenset | None = None,
                                  negative_terms=None, collect_verdicts: list | None = None,
+                                 subject: str | None = None,
                                  ) -> list[SourcedAsset] | NoMatch:
     """Fill ONE beat with up to `n_target` DISTINCT clean, CONTENT-VERIFIED clips (visual-density
     standard). Walks the eligible list in rank order, skipping `exclude_ids` (video-wide no-repeat) and
@@ -148,7 +155,8 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
             "vision gate required but no LLM configured — set ANTHROPIC_API_KEY or pass vision=False.")
 
     exclude = set(exclude_ids or ())
-    plan = build_query_plan(brief, approx_seconds=approx_seconds, target_fmt=target_fmt, llm=llm)
+    plan = build_query_plan(brief, approx_seconds=approx_seconds, target_fmt=target_fmt, llm=llm,
+                            subject=subject)
     expect = _vision.Expect.from_plan(plan, required=required_axes)
     eligible, seen, considered, best = await _rank_eligible(
         conn, providers, plan, channel_id=channel_id, target_w=target_w, target_h=target_h,
@@ -251,6 +259,180 @@ async def source_clips_for_brief(conn, providers, *, brief: str, brief_ref: str,
                        data={"considered": list(considered), "verdicts": verdicts,
                              "contradictions": contradictions, "echo_pairs": echo_pairs})
     return NoMatch(shot_brief_ref=brief_ref, reason=reason, considered=considered)
+
+
+import re as _re
+
+_FIT_W = _re.compile(r"[a-z][a-z-]+")
+_FIT_STOP = frozenset((
+    "the", "and", "with", "into", "from", "that", "this", "then", "over", "under", "across", "toward",
+    "towards", "shot", "wide", "medium", "close", "closeup", "slow", "pan", "aerial", "drone", "view",
+    "angle", "footage", "clip", "scene", "held", "available", "movement", "moving", "walking", "essential",
+    "required", "throughout", "welcome", "sense", "show", "showing", "against", "front", "behind",
+))
+
+
+def _fit_tokens(text: str) -> set[str]:
+    return {w for w in _FIT_W.findall((text or "").lower()) if len(w) > 3 and w not in _FIT_STOP}
+
+
+def _fit_score(asset: SourcedAsset, brief_tokens: set[str]) -> int:
+    """How well a verified clip suits a beat: overlap of the clip's tags/title with the beat's content
+    words. All clips already PASS species+wild, so this only steers WHICH beat each goes to — it never
+    rejects. Ties are broken by the clip's own match score (handled by the caller's stable sort)."""
+    c = asset.candidate
+    ct = _fit_tokens(" ".join(c.tags)) | _fit_tokens(c.title)
+    return len(brief_tokens & ct)
+
+
+def _allocate_pool(pool: list[SourcedAsset], beats: list[dict]) -> dict[int, list[SourcedAsset]]:
+    """Distribute ONE verified film-wide pool across beats so none is starved. Two passes: first bring
+    EVERY beat up to its n_min (neediest-first, best-fit), then fill toward n_target. A clip is used
+    once. Best-fit steers a 'calf' clip to the calf beat, a 'dusk' clip to the closing beat — but every
+    clip fits the film (all passed species+wild), so an imperfect fit still lands somewhere useful."""
+    tokens = {b["index"]: _fit_tokens(b["brief"]) for b in beats}
+    assigned: dict[int, list[SourcedAsset]] = {b["index"]: [] for b in beats}
+    remaining = list(pool)                                   # pool is pre-sorted best-score-first
+    for phase in ("n_min", "n_target"):
+        moved = True
+        while moved and remaining:
+            moved = False
+            for b in beats:
+                cap = b[phase]
+                if len(assigned[b["index"]]) >= cap or not remaining:
+                    continue
+                best = max(remaining, key=lambda a: _fit_score(a, tokens[b["index"]]))
+                assigned[b["index"]].append(best)
+                remaining.remove(best)
+                moved = True
+    return assigned
+
+
+async def source_film(conn, providers, *, subject: str, beats: list[dict], target_fmt: str,
+                      target_w: int, target_h: int, cache_dir: str, channel_id: int,
+                      job_id: int | None = None, llm=None, required_axes: frozenset | None = None,
+                      negative_terms=None, per_page: int = 50, pages: int = 2, max_verify: int = 90,
+                      exclude_ids: set | None = None) -> tuple[dict[int, list[SourcedAsset]], dict]:
+    """FILM-WIDE sourcing + allocation — the structural fix for beat-by-beat depletion. `beats` is a
+    list of {index, label, brief, n_min, n_target, approx_seconds}. Builds ONE candidate pool from the
+    UNION of every beat's SUBJECT-ANCHORED query set (the film subject is forced into every query, so a
+    scene-only brief like 'the herd crossing' can no longer surface muskox/sheep), searched with deeper
+    per_page + pagination for reach, verifies each DISTINCT candidate through the vision gate exactly
+    ONCE (species+wild; setting OBSERVED, not gated — the script is written to the distribution), then
+    ALLOCATES the verified pool across beats by fit so no earlier beat starves a later one. Returns
+    (allocation {index: [SourcedAsset]}, report)."""
+    import tempfile
+
+    if llm is None:
+        raise _vision.VisionUnavailable(
+            "vision gate required but no LLM configured for source_film — set ANTHROPIC_API_KEY.")
+    exclude = set(exclude_ids or ())
+    expect = _vision.Expect(subject=subject, required=frozenset(required_axes or ()))
+
+    # 1) UNION query set across beats (each plan carries the FILM subject), searched wide + deep.
+    union: dict[tuple[str, str], tuple[Candidate, str]] = {}
+    orientation = "portrait" if target_fmt == "9:16" else "landscape"
+    for b in beats:
+        plan = build_query_plan(b["brief"], approx_seconds=int(b.get("approx_seconds") or 0),
+                                target_fmt=target_fmt, llm=llm, subject=subject)
+        seen = await _search_all(providers, plan, conn, channel_id, per_page=per_page, pages=pages)
+        for k, v in seen.items():
+            union.setdefault(k, v)
+
+    # 2) Rank the whole pool against the FILM subject, keep everything above threshold.
+    film_plan = build_query_plan(subject, approx_seconds=0, target_fmt=target_fmt, subject=subject)
+    ranked = rank_candidates([c for c, _ in union.values()], film_plan,
+                             target_w=target_w, target_h=target_h, negative_terms=negative_terms)
+    eligible = [(s, c) for s, c, _ in ranked if s >= MATCH_THRESHOLD]
+    considered = tuple((round(s, 3), c.asset_id) for s, c in eligible[:12])
+
+    # 3) Verify each DISTINCT candidate ONCE (species+wild). clear → pool; uncertain → reserve.
+    clear: list[SourcedAsset] = []
+    reserve: list[SourcedAsset] = []
+    verdicts: list[dict] = []
+    contradictions = 0
+    verified = 0
+    for score, cand in eligible:
+        if verified >= max_verify:
+            break
+        key = (cand.source, cand.asset_id)
+        if key in exclude:
+            continue
+        asset = await _acquire(conn, channel_id=channel_id, job_id=job_id, cand=cand, score=score,
+                               brief_ref=f"film:{subject}", query_used=union[key][1],
+                               cache_dir=cache_dir, orientation=orientation)
+        if asset is None:
+            continue
+        verified += 1
+        with tempfile.TemporaryDirectory(prefix="vgate-") as vd:
+            frames = _vision.sample_frames(asset.local_path, vd)
+            v = _vision.vision_check(frames, expect=expect, llm=llm, channel_id=channel_id, job_id=job_id)
+        category, drivers = _vision.classify(v, expect)
+        rec = {"asset_id": cand.asset_id, "url": cand.page_url, "category": category,
+               "species": v.species, "wild": v.wild, "season": v.season_ok, "habitat": v.habitat_ok,
+               "time": v.time_ok, "drivers": list(drivers), "contradiction": v.contradiction,
+               "features": v.features, "features_indicate": v.features_indicate,
+               "season_obs": v.season_observed, "habitat_obs": v.habitat_observed,
+               "time_obs": v.time_observed, "shot_type": v.shot_type, "score": round(score, 3),
+               "reason": v.reason}
+        verdicts.append(rec)
+        if v.contradiction:
+            contradictions += 1
+            await record_event(conn, "sourcing.vision_contradiction",
+                               message=f"film:{subject} ⚠ {cand.source}:{cand.asset_id} — features "
+                                       f"'{v.features_indicate}' vs species={v.species}: {v.reason}",
+                               channel_id=channel_id, job_id=job_id, data={"verdict": rec})
+        if category == "reject":
+            await record_event(conn, "sourcing.vision_reject",
+                               message=f"film:{subject} ✗ {cand.source}:{cand.asset_id} — "
+                                       f"{','.join(drivers)}: {v.reason}",
+                               channel_id=channel_id, job_id=job_id, data={"verdict": rec})
+            continue
+        (clear if category == "clear" else reserve).append(asset)
+
+    # 4) ALLOCATE. Fill n_min from CLEAR first; only if the clear pool is short do we draw the reserve.
+    beats = sorted(beats, key=lambda b: b["index"])
+    alloc = _allocate_pool(clear, beats)
+    total_min = sum(b["n_min"] for b in beats)
+    if sum(len(v) for v in alloc.values()) < total_min and reserve:   # top up shortfall with reserve
+        alloc = _allocate_pool(clear + reserve, beats)
+
+    echo_pairs = _vision.detect_echo(
+        [(v["asset_id"], v.get("features", ""), v.get("species")) for v in verdicts])
+    accepted_ids = {a.asset_id for v in alloc.values() for a in v}
+    for rec in verdicts:
+        rec["used"] = rec["asset_id"] in accepted_ids
+
+    beat_reports = []
+    for b in beats:
+        got = alloc[b["index"]]
+        got_recs = [next((r for r in verdicts if r["asset_id"] == a.asset_id), {}) for a in got]
+        beat_reports.append({
+            "beat": b["index"], "label": b.get("label", ""), "narration_s": round(b.get("approx_seconds", 0), 1),
+            "n_min": b["n_min"], "n_target": b["n_target"], "verified": len(got),
+            "clear": sum(1 for r in got_recs if r.get("category") == "clear"),
+            "reached_min": len(got) >= b["n_min"],
+            "accepted": [{"asset_id": a.asset_id, "url": a.candidate.page_url} for a in got],
+            "verdicts": got_recs,
+        })
+
+    n_reject = sum(1 for v in verdicts if v["category"] == "reject")
+    report = {
+        "subject": subject, "pool_candidates": len(union), "eligible": len(eligible),
+        "verified": verified, "clear": len(clear), "reserve": len(reserve), "rejected": n_reject,
+        "contradictions": contradictions, "echo_pairs": echo_pairs, "considered": list(considered),
+        "verdicts": verdicts, "beats": beat_reports,
+        "all_reached_min": all(br["reached_min"] for br in beat_reports),
+        "allocated_total": sum(len(v) for v in alloc.values()),
+    }
+    await record_event(conn, "sourcing.film_pool",
+                       message=f"film:{subject}: pool {len(union)} → {len(eligible)} eligible → "
+                               f"{len(clear)} clear + {len(reserve)} reserve ({n_reject} rejected, "
+                               f"{contradictions} contradiction) → allocated {report['allocated_total']}",
+                       channel_id=channel_id, job_id=job_id,
+                       data={k: report[k] for k in ("pool_candidates", "eligible", "verified", "clear",
+                                                    "reserve", "rejected", "contradictions")})
+    return alloc, report
 
 
 async def source_shot_briefs(conn, providers, briefs, *, target_fmt: str, target_w: int, target_h: int,

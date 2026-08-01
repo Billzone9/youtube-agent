@@ -49,8 +49,8 @@ class PexelsProvider:
             return False
 
     async def search(self, query: str, *, orientation: str, min_duration: int,
-                     per_page: int = 15) -> list[Candidate]:
-        params = {"query": query, "orientation": orientation, "per_page": per_page}
+                     per_page: int = 15, page: int = 1) -> list[Candidate]:
+        params = {"query": query, "orientation": orientation, "per_page": per_page, "page": max(1, page)}
         if min_duration:
             params["min_duration"] = int(min_duration)
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:

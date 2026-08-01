@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from .base import Candidate, NoMatch, QueryPlan, SourcedAsset, SourcingError, StockProvider
 from .factory import get_stock_providers
-from .orchestrator import source_clips_for_brief, source_for_brief, source_shot_briefs
+from .orchestrator import source_clips_for_brief, source_film, source_for_brief, source_shot_briefs
 
 __all__ = [
-    "get_stock_providers", "source_for_brief", "source_clips_for_brief", "source_shot_briefs",
+    "get_stock_providers", "source_for_brief", "source_clips_for_brief", "source_film",
+    "source_shot_briefs",
     "to_clip", "SourcedAsset", "NoMatch", "Candidate", "QueryPlan", "StockProvider", "SourcingError",
 ]
 

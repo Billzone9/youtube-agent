@@ -298,14 +298,12 @@ def vision_check(frames: list[str], *, expect: Expect, llm, samples: int = _SAMP
     habitat_ok = _setting_match(rep["habitat_observed"], expect.habitat)
     time_ok = _setting_match(rep["time_observed"], expect.time_of_day)
 
-    # CONTRADICTION: features_indicate points to the subject but the label rejects it, or points
-    # elsewhere yet the label accepts. Detected from features_indicate vs the subject noun.
+    # CONTRADICTION: the model RECITES the subject's features (features_indicate names the expected
+    # subject) but the label REJECTS it — the wolf over-correction. Only this direction: the reverse
+    # ("names something else yet accepts") false-fired on 3 runs whenever the subject wasn't propagated
+    # (features_indicate 'African elephant' vs an expect.subject of 'herd'), so it is dropped.
     noun = _head_noun(expect.subject)
-    indicates_subject = _indicates_subject(rep["features_indicate"], noun)
-    names_other = bool(rep["features_indicate"]) and not indicates_subject and bool(noun) \
-        and not re.search(rf"\b{re.escape(noun)}\b", rep["features_indicate"].lower())
-    contradiction = (indicates_subject and species == CLEAR_MISMATCH) \
-        or (names_other and species == CLEAR_MATCH)
+    contradiction = _indicates_subject(rep["features_indicate"], noun) and species == CLEAR_MISMATCH
 
     agree = sum(1 for c in calls if c["species"] == species)
     reason = (f"[{agree}/{len(calls)} agree species={species}] "

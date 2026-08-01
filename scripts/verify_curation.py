@@ -115,6 +115,16 @@ def main():
     check("identical features, SAME verdict → NOT flagged (expected recurrence)",
           len(detect_echo([("a", ident, MM), ("b", ident, MM)])) == 0)
 
+    print("[4d] REGRESSION — contradiction no longer FALSE-FIRES when the subject wasn't propagated")
+    # The 3-run false-fire: the gate sees 'African elephant', ACCEPTS (clear_match), but expect.subject
+    # was a SCENE word ('herd') because the subject never reached the plan → the old names_other branch
+    # wrongly flagged a contradiction. The branch is dropped; only 'recites subject then rejects' fires.
+    scene_expect = Expect(subject="herd", required=frozenset())
+    vd_ff = vision_check([_FRAME], expect=scene_expect,
+                         llm=_FakeVisionLLM(_v(species=CLEAR_MATCH, wild=CLEAR_MATCH, indicate="African elephant")))
+    check("accepts + features name a word ≠ the (mis-set) subject → NOT a contradiction",
+          vd_ff.contradiction is False, f"contradiction={vd_ff.contradiction}")
+
     print("[5] Item 6 — vision gate FAILS LOUD when required but no LLM")
     async def _no_llm():
         return await source_clips_for_brief(
@@ -128,6 +138,32 @@ def main():
         check("vision=True + no LLM raises VisionUnavailable", True)
     skipped = vision_check([_FRAME], expect=wolf, llm=None)
     check("explicit no-LLM vision_check still SKIPS (the vision=False path)", skipped.skipped)
+
+    print("[6] REGRESSION — the elephant Stage-1 miss: subject FORCED into must_terms + every query")
+    # A scene-only brief (beat3 of 'The Old Paths') never names the animal — so the OLD extraction put
+    # scene words ('herd'/'savanna') in must_terms and a muskox tagged 'herd' PASSED. The film subject
+    # must be forced in. (llm=None → deterministic keyword path; no network/spend.)
+    eleph_brief = ("Wide shots of the herd strung out in loose column across open savanna — a long line "
+                   "of animals crossing dry, cracked earth or pale grass. Movement throughout.")
+    p_scene = build_query_plan(eleph_brief, approx_seconds=17, target_fmt="16:9")     # no subject
+    check("scene-only brief does NOT put 'elephant' in must_terms (the ROOT CAUSE)",
+          "elephant" not in p_scene.must_terms, str(p_scene.must_terms))
+    p_film = build_query_plan(eleph_brief, approx_seconds=17, target_fmt="16:9", subject="african elephant")
+    check("subject FORCED into must_terms", set(p_film.must_terms) == {"african", "elephant"}, str(p_film.must_terms))
+    check("EVERY query carries the subject head 'elephant'",
+          all("elephant" in q for q in p_film.queries), str(p_film.queries))
+    muskox = Candidate("pixabay", "50706", "https://x/muskox/", "u", "L", 1920, 1080,
+                       tags=("muskox", "herd", "tundra", "woolly", "arctic"), title="muskox herd on tundra")
+    sheep = Candidate("pixabay", "116943", "https://x/sheep/", "u", "L", 1920, 1080,
+                      tags=("sheep", "woolly", "flock", "column", "crossing"), title="woolly sheep crossing")
+    check("muskox candidate against the elephant FILM plan scores 0.0",
+          score_candidate(muskox, p_film, target_w=1920, target_h=1080)[0] == 0.0)
+    check("woolly-sheep candidate against the elephant FILM plan scores 0.0",
+          score_candidate(sheep, p_film, target_w=1920, target_h=1080)[0] == 0.0)
+    p_bug = QueryPlan(queries=("herd crossing", "column savanna"), orientation="landscape",
+                      min_seconds=10, must_terms=("herd",), subject="herd")
+    check("under the OLD scene-only must_terms ('herd') the muskox DID pass (>0) — the bug now fixed",
+          score_candidate(muskox, p_bug, target_w=1920, target_h=1080)[0] > 0.0)
 
     print(f"\n{'ALL PASSED' if _failures == 0 else str(_failures) + ' CHECK(S) FAILED'}")
     sys.exit(1 if _failures else 0)
