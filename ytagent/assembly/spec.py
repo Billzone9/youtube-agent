@@ -70,6 +70,7 @@ class AudioMix:
     duck: dict = field(default_factory=lambda: {"threshold": 0.05, "ratio": 8, "attack": 5, "release": 300})
     include_bed: bool = False
     bed: str | None = None
+    bed_db: float = -30.0    # ambience bed level under the whole master — felt, not heard
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,9 @@ class Beat:
     out_transition: Transition | None = None
     duration: float | None = None        # EXPLICIT beat length for a WORDLESS beat (a cold open) — used
     #                                      when there is no narration to measure (score/ambience only)
+    breather_s: float = 0.0              # STRUCTURAL breather: extra picture+score time AFTER the
+    #                                      narration (score/bed carry it, no voice) — the beat runs
+    #                                      narration_len + breather_s; the narration mp3 is untouched
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,7 @@ def _beat(d: dict) -> Beat:
         music=MusicCue(**m) if m else None,
         clips=tuple(_clip(c) for c in d.get("clips", [])),
         out_transition=Transition(**t) if t else None,
+        duration=d.get("duration"), breather_s=d.get("breather_s", 0.0),
     )
 
 
@@ -157,7 +162,7 @@ def load_spec(path: str) -> EditSpec:
         beats=tuple(_beat(b) for b in d["beats"]),
         audio_mix=AudioMix(narration_db=am.get("narration_db", 0.0), music_db=am.get("music_db", -16.0),
                            duck=am.get("duck", AudioMix().duck), include_bed=am.get("include_bed", False),
-                           bed=am.get("bed")),
+                           bed=am.get("bed"), bed_db=am.get("bed_db", -30.0)),
         sfx=tuple(Sfx(**s) for s in d.get("sfx", [])),
         title_card=TitleCard(**tc) if tc else None,
         fade_in=d.get("fade_in", 0.0),

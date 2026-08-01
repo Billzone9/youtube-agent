@@ -45,7 +45,7 @@ def check(label, ok, detail=""):
 
 def _clip(work, i, dur=10):
     p = os.path.join(work, f"clip{i}.mp4")
-    subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", f"color=c={_COLORS[i]}:s=1920x1080:d={dur}:r=24",
+    subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", f"color=c={_COLORS[i % len(_COLORS)]}:s=1920x1080:d={dur}:r=24",
                     "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", p], capture_output=True, check=True)
     return p
 
@@ -76,7 +76,7 @@ class _EmptyProvider:
     def name(self): return "empty"
     def rate_limit(self): return {}
     async def healthcheck(self): return True
-    async def search(self, q, *, orientation, min_duration, per_page=15): return []
+    async def search(self, q, *, orientation, min_duration, per_page=15, page=1): return []
 
 
 class _FakeLLM:
@@ -180,6 +180,55 @@ async def run():
         check("master duration = declared cold-open + narration − overlap (~27s)",
               abs(wp["duration"] - 27.2) <= 1.6, f"{wp['duration']:.1f}s")
         check("wordless-beat noise gate PASS (silence is clean)", wres.noise_gate.ok)
+
+        print("[E] AUDIO DESIGN: per-beat cue + structural breather + ambience bed → clean master")
+        from ytagent.assembly.spec import MusicCue
+        cue = _mp3(work, "cue.mp3", 20)                 # a clean 'score' cue (looped under narration)
+        bed = _mp3(work, "bed.mp3", 12)                 # a clean ambience 'bed' (crossfade-looped)
+        narrX = _mp3(work, "nx.mp3", 20)
+        clipsE = [_asset(_clip(work, i, 10)) for i in range(6, 9)]
+        specE = bind_edit_spec(_script([(1, "B1")]), {1: clipsE}, {1: narrX}, target=TGT,
+                               cues={1: MusicCue(file=cue, in_db=-16.0)}, breathers={1: 4.0},
+                               bed=bed, bed_db=-30.0)
+        check("beat carries the cue + a 4s breather",
+              specE.beats[0].music is not None and specE.beats[0].breather_s == 4.0)
+        check("audio_mix carries the ambience bed", specE.audio_mix.include_bed and bool(specE.audio_mix.bed))
+        edst = os.path.join(work, "emaster.mp4")
+        eres = assemble_spec(specE, dst=edst, workdir=work)
+        ep = probe(edst)
+        check("audio-designed master HAS audio", ep["has_audio"] is True)
+        check("duration = narration + breather (~24s)", abs(ep["duration"] - 24.0) <= 1.6, f"{ep['duration']:.1f}s")
+        check("audio-designed master NOISE gate PASS (48kHz — bed+cue+finish clean)", eres.noise_gate.ok,
+              f"sr={eres.noise['sample_rate']} >16k={eres.noise['hi16k_db']}")
+
+        print("[F] contents MANIFEST drives the disclosure line (not a hard-coded string)")
+        from ytagent.metadata.llm_writer import LLMWriter
+
+        class _CapProvider:
+            def __init__(self): self.seen = ""
+            def complete(self, req):
+                from ytagent.providers.base import LLMResponse, TokenUsage
+                self.seen += " ".join(m["content"] for m in req.messages if isinstance(m["content"], str))
+                return LLMResponse(
+                    text='{"title":"T","opening":"o","disclosure":"Narration, music and ambience are '
+                         'AI-generated; footage is licensed stock.","tags":[]}',
+                    model="f", usage=TokenUsage(), request_id="r")
+
+        cap = _CapProvider()
+        out = LLMWriter(cap).write(
+            video={"topic": "elephant", "title": "The Old Paths",
+                   "contents": {"narration": "AI TTS", "music": "AI-generated", "ambience": "AI-generated",
+                                "footage": "licensed stock"}},
+            channel=ch, research=type("R", (), {"available": False, "notes": ""})())
+        check("the manifest reached the writer prompt", "actual contents" in cap.seen and "ambience" in cap.seen)
+        check("the writer returns a disclosure line", bool(out.get("disclosure")))
+
+        print("[G] generate_audio degrades to NARRATION-ONLY without a music provider (no spend)")
+        from ytagent.audio_design import generate_audio
+        dz = await generate_audio(conn, None, _script([(1, "B1")]), channel=ch, job_id=None,
+                                  workdir=work, budget_credits=4000)
+        check("no music provider → no cues, no breathers, manifest = narration+footage only",
+              not dz.cues and not dz.breathers and "music" not in dz.manifest and bool(dz.manifest.get("narration")))
     finally:
         await conn.close()
 

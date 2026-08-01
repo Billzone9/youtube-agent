@@ -108,6 +108,28 @@ async def write_tts_cost(conn, *, channel_id: int, job_id: int | None, beat_name
     return await cur.fetchone()
 
 
+async def write_music_cost(conn, *, channel_id: int, job_id: int | None, cue: str, seconds: float,
+                           credits_est: float, amount_gbp_est, request_id: str | None, model: str,
+                           kind: str = "music") -> dict:
+    """Log an ElevenLabs Music/SFX cue cost as an ESTIMATE (reconciled=False). ElevenLabs bills
+    ASYNCHRONOUSLY (CLAUDE.md) — per-call reads settle against the live balance later — so a balance
+    reconciliation pass updates this row. Idempotent on music:{job_id}:{cue}."""
+    meta = {"estimate": True, "seconds": round(float(seconds), 2), "credits": credits_est,
+            "kind": kind, "request_id": request_id}
+    cur = await conn.execute(
+        "INSERT INTO cost_ledger (idempotency_key, channel_id, job_id, category, is_amortised, "
+        " provider, description, amount_gbp, currency, credits, period_month, reconciled, metadata) "
+        "VALUES (%(key)s,%(channel_id)s,%(job_id)s,'ai_generation',false,'ElevenLabs Music',%(desc)s,"
+        " %(gbp)s,'GBP',%(credits)s,date_trunc('month',now())::date,false,%(meta)s) "
+        "ON CONFLICT (idempotency_key) DO UPDATE SET amount_gbp=EXCLUDED.amount_gbp, "
+        " credits=EXCLUDED.credits, metadata=EXCLUDED.metadata RETURNING *",
+        {"key": f"music:{job_id}:{cue}", "channel_id": channel_id, "job_id": job_id,
+         "desc": f"{kind} cue '{cue}' ({model}, {round(float(seconds),1)}s)", "gbp": amount_gbp_est,
+         "credits": credits_est, "meta": Jsonb(meta)},
+    )
+    return await cur.fetchone()
+
+
 async def totals_gbp(conn) -> dict:
     """Lifetime totals for an honest net-position summary."""
     cur = await conn.execute("SELECT COALESCE(SUM(amount_gbp), 0) AS c FROM cost_ledger")

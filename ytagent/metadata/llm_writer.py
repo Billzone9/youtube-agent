@@ -31,8 +31,10 @@ TASK: write the public YouTube DESCRIPTION prose for one video, to the channel's
 - Length is your judgement for the niche and topic — not a fixed template; typically ~120–220 words.
 - TITLE stays bare: the work's name only. No appended taglines, subtitles, or SEO phrases after a "|"
   or dash (e.g. NOT "… | A Cinematic Wildlife Documentary"). SEO lives in the description and tags.
-- End with a SINGLE, graceful one-line disclosure appropriate to an AI-assisted documentary whose
-  footage is licensed stock (e.g. "Narration and score are AI-assisted; all footage is licensed stock.").
+- End with a SINGLE, graceful one-line disclosure. When the user message lists "This video's actual
+  contents", the disclosure MUST reflect EXACTLY those layers and no others (do not mention music or
+  ambience if they are not listed). Absent such a list, use a generic honest line (e.g. "Narration and
+  score are AI-assisted; all footage is licensed stock.").
 - NEVER include internal artifacts: filenames, paths, manifest/provenance references, IDs, QC numbers.
 Return STRICT JSON only: {"title": str, "opening": str, "disclosure": str}. `opening` is the prose
 BEFORE chapters (the paragraphs); do not include a chapter list or the disclosure inside `opening`."""
@@ -94,10 +96,18 @@ class LLMWriter:
             f"Research signals (web/trend): {getattr(research, 'notes', '')}"
         )
         facts = video.get("facts") or ""
+        # Contents manifest → the disclosure states ONLY what is actually present (never a hard-coded
+        # line). E.g. {"narration":"AI TTS","music":"AI-generated","ambience":"AI-generated",
+        # "sound effects":"AI-generated","footage":"licensed/CC-0 stock"}.
+        manifest = video.get("contents") or {}
+        manifest_line = ("This video's actual contents (write the disclosure to reflect EXACTLY these, "
+                         "nothing more): " + "; ".join(f"{k} — {v}" for k, v in manifest.items()) + "\n"
+                         ) if manifest else ""
         user = (
             f"VIDEO SUBJECT: {topic}\n"
             f"{research_line}\n"
             + (f"Established facts to honour (accurate only): {facts}\n" if facts else "")
+            + manifest_line
         )
 
         # --- prose (QUALITY), retried on an AI-tell flag ---

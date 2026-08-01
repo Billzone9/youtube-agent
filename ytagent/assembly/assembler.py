@@ -37,21 +37,21 @@ def _build_from_clips(spec, dst: str, workdir: str) -> str:
     the single source of beat duration; the master runtime = Σ narration − Σ crossfade overlaps."""
     from dataclasses import replace as dc_replace
 
+    workdir = os.path.abspath(workdir)          # beat paths must be ABSOLUTE — an in-memory clips spec
+    #                                             carries assets_root='/', which would mis-resolve a
+    #                                             relative workdir to /<workdir> (root).
     tag = spec.active_format.replace(":", "x")
     beat_paths = []
     for b in spec.beats:
         # a WORDLESS beat (cold open) carries an explicit declared duration; otherwise the narration
-        # length drives the beat. One or the other must be present.
-        if b.narration:
-            ndur = ffmpeg.probe(spec.resolve(b.narration))["duration"]
-        elif b.duration:
-            ndur = float(b.duration)
-        else:
+        # length drives the beat, PLUS its structural breather (extra picture+score, no voice).
+        if not (b.narration or b.duration):
             raise ValueError(f"beat {b.name!r}: clips path needs narration or a declared duration")
+        total = audio.beat_total(spec, b)               # narration/duration + breather_s
         vid = os.path.join(workdir, f"{tag}_{b.name}_v.mp4")
         aud = os.path.join(workdir, f"{tag}_{b.name}_a.m4a")
         av = os.path.join(workdir, f"{tag}_{b.name}.mp4")
-        stage1.build_beat_fitted(spec, b, vid, duration=ndur)
+        stage1.build_beat_fitted(spec, b, vid, duration=total)
         audio.build_beat_audio(spec, b, aud)
         ffmpeg.run(["-i", vid, "-i", aud, "-map", "0:v", "-map", "1:a",
                     "-c:v", "copy", "-c:a", "copy", "-shortest", "-movflags", "+faststart"], dst=av)
@@ -102,6 +102,17 @@ def assemble_spec(spec, *, dst: str, from_stage: str | None = None, reference: d
         out = _build_from_clips(spec, dst, workdir or tempfile.mkdtemp(prefix="assemble-"))
     else:
         raise ValueError(f"unknown from_stage {stage!r}")
+
+    # MASTER AUDIO FINISH — layer the ambience bed + SFX over the joined master (add-on pass; the
+    # bare lion join stays untouched when there is no bed/sfx). Runs before the output noise gate.
+    am = spec.audio_mix
+    if (am.include_bed and am.bed) or spec.sfx:
+        finished = f"{dst}.finish.mp4"
+        audio.master_audio_finish(spec, out, finished,
+                                  bed=spec.resolve(am.bed) if (am.include_bed and am.bed) else None,
+                                  bed_db=am.bed_db, sfx=spec.sfx)
+        os.replace(finished, dst)
+        out = dst
     render_s = time.monotonic() - t0
 
     measured = qc.measure(out, provenance_ref=provenance_ref)

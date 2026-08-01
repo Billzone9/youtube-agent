@@ -43,6 +43,27 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## Audio-design slice — deferred polish (from the elephant end-to-end run, 2026-08-01)
+- `[ ]` **SFX (sound-generation) scope is BLOCKED** — the ElevenLabs key 401s on `/v1/sound-generation`
+  ("key lacks the sfx scope"). Pre-flighted live; the film shipped WITHOUT SFX (graceful degradation,
+  as designed). To enable a scene-earned SFX (e.g. a low infrasound rumble under beat6 "what passes
+  below hearing"), Banks adds the sound-generation scope (or a scoped key) in the ElevenLabs dashboard
+  — a human-only spend-capability change. Then pass an `SfxSpec` to the conductor.
+- `[ ]` **SFX placement needs the measured timeline.** `Sfx.at_s` is an ABSOLUTE master offset, but the
+  timeline is only known after TTS + breathers. To place an SFX inside a specific beat, compute that
+  beat's absolute start from the measured narration lengths + breathers + cold-open + xfade overlaps
+  AFTER TTS, then set `at_s`. Deferred with the scope block above.
+- `[ ]` **Music cue `kind` mislabel (cosmetic).** `music/elevenlabs.py:generate` infers `kind="bed"`
+  when the prompt contains "bed"/"ambience" — the `theme` cue's prompt says "a bed of feeling", so its
+  ledger row reads "bed cue 'theme'". The cue file + per-beat assignment are correct; only the ledger
+  `kind` label is off. Pass `kind` explicitly from the conductor instead of sniffing the prompt.
+- `[ ]` **Hard music-loop seam under long beats.** A compact cue (35–45s) is `stream_loop`ed to cover a
+  62–72s beat (the lion recipe), so there is a hard-cut loop point mid-beat. Inaudible-ish under
+  narration at −16 dB, but a per-beat `acrossfade` self-loop (like the bed) would remove it. Deferred —
+  this matches the approved lion recipe; revisit only if a beat's seam is audible on review.
+- `[ ]` **Master is 736 MB for 6.2 min** (CRF 18, 1080p). Fine for a private master; consider a
+  delivery-encode pass (CRF 20–22 / two-pass) before any real upload if size matters.
+
 ## Known defect (log, do not chase)
 - `[x]` **Contradiction detector — false-fire — FIXED 2026-08-01.** The false-fire came from the
   `names_other` branch (`features_indicate` names something other than the subject, yet species

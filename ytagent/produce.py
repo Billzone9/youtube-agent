@@ -19,6 +19,7 @@ import shutil
 from dataclasses import asdict
 
 from . import repo
+from .audio_design import generate_audio
 from .assembly import assemble_spec, bind_edit_spec
 from .assembly import qc as aqc
 from .assembly.density import assert_visual_density, min_clips, target_clips
@@ -137,17 +138,53 @@ def _persist_production(slug: str, script, narration_paths: dict) -> str:
     return root
 
 
+async def _tts_all_beats(conn, script, *, tts, voice_id, model, workdir, channel_id, job_id) -> dict:
+    """Synthesize the SPOKEN beats (wordless cold-open skipped — no spend), noise-gate each mp3, and
+    ledger the per-call TTS estimate. Returns {beat.index → mp3 path}. A hissy narration HARD-fails
+    (house rule); a missing key/voice fails loud BEFORE any spend."""
+    if tts is None or not voice_id:
+        raise ProductionError("TTS unavailable (no key/scope or no voice_id) — see the Music→TTS scope "
+                              "precondition.")
+    narration_texts = script.to_narration()
+    narration = {}
+    for b in script.beats:
+        text = narration_texts[f"beat{b.index}"]
+        if not text.strip():              # WORDLESS beat (cold open) — no TTS call, no spend
+            continue
+        ndst = os.path.join(workdir, f"narr_beat{b.index}.mp3")
+        r = await asyncio.to_thread(tts.synthesize, text, voice_id=voice_id, dst=ndst, model=model)
+        g = aqc.check_source_clean(r.path)
+        if not g.ok:
+            raise ProductionError(f"beat{b.index} narration failed the noise gate: {g.checks}")
+        credits = r.characters * _CREDITS_PER_CHAR
+        await repo.ledger.write_tts_cost(
+            conn, channel_id=channel_id, job_id=job_id, beat_name=f"beat{b.index}",
+            characters=r.characters, credits_est=credits,
+            amount_gbp_est=round(credits * _GBP_PER_CREDIT, 4), request_id=r.request_id,
+            model=model, voice_id=voice_id)
+        narration[b.index] = r.path
+    await record_event(conn, "narrated", message=f"{len(narration)} beats voiced ({model})",
+                       channel_id=channel_id, job_id=job_id)
+    return narration
+
+
 async def _assemble_and_submit(conn, notifier, *, channel, script, sourced, narration, llm_provider,
                                usage_sink, pricing, description_exemplar, publisher, chat_id, dst,
-                               workdir, job_id, topic, target_fmt, target_w, target_h) -> dict:
-    """Shared tail: bind → density gate → assemble (gates) → describe → submit. Used by both a fresh
-    production and a narration-reuse re-make."""
+                               workdir, job_id, topic, target_fmt, target_w, target_h,
+                               design=None) -> dict:
+    """Shared tail: bind (+ audio design) → density gate → assemble (gates) → describe → submit. Used by
+    a fresh production and a narration-reuse re-make. `design` (AudioDesign) attaches per-beat cues,
+    structural breathers, the ambience bed and SFX; without it the cut is narration-only (lion path)."""
     tgt = Target(fmt=target_fmt, w=target_w, h=target_h, fps=24)
-    spec = bind_edit_spec(script, sourced, narration, target=tgt)
+    dz = design
+    spec = bind_edit_spec(script, sourced, narration, target=tgt,
+                          cues=(dz.cues if dz else None), breathers=(dz.breathers if dz else None),
+                          bed=(dz.bed if dz else None), sfx=(dz.sfx if dz else ()))
 
     density = assert_visual_density(spec)                   # HARD gate — too-sparse/reused cut fails here
-    await record_event(conn, "visual_density_ok",
-                       message="; ".join(f"{k}:{v['clips']}clips@{v['shot_s']}s" for k, v in density.items()),
+    await record_event(conn, "visual_density_ok",           # skip `_`-prefixed report keys (e.g. _long_holds)
+                       message="; ".join(f"{k}:{v['clips']}clips@{v['shot_s']}s"
+                                         for k, v in density.items() if not k.startswith("_")),
                        channel_id=channel["id"], job_id=job_id, data={"density": density})
 
     result = await asyncio.to_thread(assemble_spec, spec, dst=dst, provenance_ref="sourced_assets",
@@ -162,8 +199,10 @@ async def _assemble_and_submit(conn, notifier, *, channel, script, sourced, narr
 
     facts = "; ".join(f.claim for f in script.facts_used if f.established)
     writer = LLMWriter(llm_provider, exemplar=description_exemplar)
-    desc = generate_description({"topic": topic, "title": script.title, "facts": facts},
-                                channel, UnavailableResearch(), writer)
+    desc = generate_description(
+        {"topic": topic, "title": script.title, "facts": facts,
+         "contents": (dz.manifest if dz and dz.manifest else None)},
+        channel, UnavailableResearch(), writer)
     await _drain_llm(conn, usage_sink, pricing, channel_id=channel["id"], job_id=job_id)
 
     sub = await submit_video_for_approval(
@@ -174,13 +213,14 @@ async def _assemble_and_submit(conn, notifier, *, channel, script, sourced, narr
         noise_ok=result.noise_gate.ok if result.noise_gate else None)
         + f"\nSubmitted <b>{script.title}</b> for approval ({publisher.mode}).")
     return {"ok": True, "job_id": job_id, "script": script, "sourced": sourced, "density": density,
-            "result": result, "description": desc, "submit": sub}
+            "result": result, "description": desc, "submit": sub, "design": design}
 
 
 async def produce_video(conn, notifier, *, channel, topic, providers, tts, script_writer,
                         llm_provider, usage_sink, description_exemplar, publisher, chat_id, dst,
                         workdir, runtime_target_s=150, n_beats=4, cache_dir="assets/sourced",
-                        target_fmt="16:9", target_w=1920, target_h=1080) -> dict:
+                        target_fmt="16:9", target_w=1920, target_h=1080, music=None,
+                        budget_credits=4000, sfx_specs=None) -> dict:
     os.makedirs(workdir, exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     vp = (channel.get("config") or {}).get("voice_profile") or {}
@@ -209,41 +249,60 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
             target_w=target_w, target_h=target_h, cache_dir=cache_dir, llm=llm_provider,
             length_of=lambda b: b.approx_seconds or 30, subject=topic)
 
-        # 3) TTS ALL beats (spend) — each narration gated for noise before the render
-        if tts is None or not voice_id:
-            raise ProductionError("TTS unavailable (no key/scope or no voice_id) — see the plan's "
-                                  "Music→TTS scope precondition.")
-        narration_texts = script.to_narration()
-        narration = {}
-        for b in script.beats:
-            text = narration_texts[f"beat{b.index}"]
-            if not text.strip():          # WORDLESS beat (cold open) — no TTS call, no spend, no empty
-                continue                  # synth; the binder treats a missing narration as wordless
-            ndst = os.path.join(workdir, f"narr_beat{b.index}.mp3")
-            r = await asyncio.to_thread(tts.synthesize, text, voice_id=voice_id, dst=ndst, model=model)
-            g = aqc.check_source_clean(r.path)
-            if not g.ok:
-                raise ProductionError(f"beat{b.index} narration failed the noise gate: {g.checks}")
-            credits = r.characters * _CREDITS_PER_CHAR
-            await repo.ledger.write_tts_cost(
-                conn, channel_id=channel["id"], job_id=jid, beat_name=f"beat{b.index}",
-                characters=r.characters, credits_est=credits,
-                amount_gbp_est=round(credits * _GBP_PER_CREDIT, 4), request_id=r.request_id,
-                model=model, voice_id=voice_id)
-            narration[b.index] = r.path
-        await record_event(conn, "narrated", message=f"{len(narration)} beats voiced ({model})",
-                           channel_id=channel["id"], job_id=jid)
-
-        # 4) PERSIST script + narration (free re-makes), then 5) bind → density gate → assemble → submit
+        # 3) TTS spoken beats → 4) design audio (cues+bed+sfx) → 5) persist → 6) assemble → submit
+        narration = await _tts_all_beats(conn, script, tts=tts, voice_id=voice_id, model=model,
+                                         workdir=workdir, channel_id=channel["id"], job_id=jid)
+        design = await generate_audio(conn, music, script, channel=channel, job_id=jid,
+                                      workdir=os.path.join(workdir, "audio"),
+                                      budget_credits=budget_credits, sfx_specs=sfx_specs)
         _persist_production(spec_slug(script.title), script, narration)
         return await _assemble_and_submit(
             conn, notifier, channel=channel, script=script, sourced=sourced, narration=narration,
             llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
             description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, dst=dst,
             workdir=workdir, job_id=jid, topic=topic, target_fmt=target_fmt, target_w=target_w,
-            target_h=target_h)
+            target_h=target_h, design=design)
 
     except Exception as e:  # noqa: BLE001 — record + surface any production failure
+        async with conn.transaction():
+            await repo.jobs.set_status(conn, jid, "failed", error=str(e))
+            await record_event(conn, "produce_failed", message=str(e),
+                               channel_id=channel["id"], job_id=jid)
+        raise
+
+
+async def produce_from_sourced(conn, notifier, *, channel, topic, script, sourced, tts, music,
+                               llm_provider, usage_sink, description_exemplar, publisher, chat_id, dst,
+                               workdir, target_fmt="16:9", target_w=1920, target_h=1080,
+                               budget_credits=4000, sfx_specs=None) -> dict:
+    """Produce from ALREADY-sourced clips (skips re-sourcing/vision — the Stage-1 curated set): TTS the
+    spoken beats → design audio (cues+bed+sfx) → assemble with the full audio design → submit for
+    approval. `sourced`: {beat.index → SourcedAsset | [SourcedAsset]}. Channel-general."""
+    os.makedirs(workdir, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+    vp = (channel.get("config") or {}).get("voice_profile") or {}
+    voice_id, model = vp.get("voice_id"), vp.get("model", "eleven_multilingual_v2")
+    pricing = await repo.ledger.get_llm_pricing(conn)
+    async with conn.transaction():
+        job = await repo.jobs.create(conn, channel_id=channel["id"], type="produce", status="assembling",
+                                     payload={"topic": topic, "format": target_fmt, "presourced": True})
+        await record_event(conn, "produce_started", message=f"produce '{topic}' (curated clips)",
+                           channel_id=channel["id"], job_id=job["id"])
+    jid = job["id"]
+    try:
+        narration = await _tts_all_beats(conn, script, tts=tts, voice_id=voice_id, model=model,
+                                         workdir=workdir, channel_id=channel["id"], job_id=jid)
+        design = await generate_audio(conn, music, script, channel=channel, job_id=jid,
+                                      workdir=os.path.join(workdir, "audio"),
+                                      budget_credits=budget_credits, sfx_specs=sfx_specs)
+        _persist_production(spec_slug(script.title), script, narration)
+        return await _assemble_and_submit(
+            conn, notifier, channel=channel, script=script, sourced=sourced, narration=narration,
+            llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
+            description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, dst=dst,
+            workdir=workdir, job_id=jid, topic=topic, target_fmt=target_fmt, target_w=target_w,
+            target_h=target_h, design=design)
+    except Exception as e:  # noqa: BLE001
         async with conn.transaction():
             await repo.jobs.set_status(conn, jid, "failed", error=str(e))
             await record_event(conn, "produce_failed", message=str(e),
@@ -254,7 +313,8 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
 async def remake_from_narration(conn, notifier, *, channel, topic, script, narration_paths, providers,
                                 llm_provider, usage_sink, description_exemplar, publisher, chat_id, dst,
                                 workdir, cache_dir="assets/sourced", target_fmt="16:9",
-                                target_w=1920, target_h=1080) -> dict:
+                                target_w=1920, target_h=1080, music=None, budget_credits=4000,
+                                sfx_specs=None) -> dict:
     """Re-make a video from EXISTING narration mp3s (no TTS spend): re-source N distinct clips per beat
     to the density standard, then bind → gate → assemble → submit. `narration_paths`: {beat.index → mp3}
     (the treasured VO, already on disk); `script`: the reconstructed script (labels + shot-briefs steer
@@ -279,14 +339,17 @@ async def remake_from_narration(conn, notifier, *, channel, topic, script, narra
         sourced = await _source_all_beats(
             conn, providers, script, channel_id=channel["id"], job_id=jid, target_fmt=target_fmt,
             target_w=target_w, target_h=target_h, cache_dir=cache_dir, llm=llm_provider,
-            length_of=lambda b: lengths[b.index])
+            length_of=lambda b: lengths[b.index], subject=topic)
+        design = await generate_audio(conn, music, script, channel=channel, job_id=jid,
+                                      workdir=os.path.join(workdir, "audio"),
+                                      budget_credits=budget_credits, sfx_specs=sfx_specs)
         _persist_production(spec_slug(script.title), script, narration_paths)
         return await _assemble_and_submit(
             conn, notifier, channel=channel, script=script, sourced=sourced, narration=narration_paths,
             llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
             description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, dst=dst,
             workdir=workdir, job_id=jid, topic=topic, target_fmt=target_fmt, target_w=target_w,
-            target_h=target_h)
+            target_h=target_h, design=design)
     except Exception as e:  # noqa: BLE001
         async with conn.transaction():
             await repo.jobs.set_status(conn, jid, "failed", error=str(e))
