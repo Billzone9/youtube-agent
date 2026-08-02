@@ -7,6 +7,8 @@ polling runner + failure routing (6c), and the Telegram control (6d) land in lat
 """
 from __future__ import annotations
 
+from .runner import Deps, approve_spend, next_run_from_cadence, run_forever, tick
 from .selection import CONSECUTIVE_INFEASIBLE_CAP, SubjectPick, next_subject
 
-__all__ = ["next_subject", "SubjectPick", "CONSECUTIVE_INFEASIBLE_CAP"]
+__all__ = ["next_subject", "SubjectPick", "CONSECUTIVE_INFEASIBLE_CAP",
+           "tick", "run_forever", "Deps", "next_run_from_cadence", "approve_spend"]

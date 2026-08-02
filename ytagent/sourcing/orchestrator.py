@@ -312,7 +312,8 @@ async def source_film(conn, providers, *, subject: str, beats: list[dict], targe
                       target_w: int, target_h: int, cache_dir: str, channel_id: int,
                       job_id: int | None = None, llm=None, required_axes: frozenset | None = None,
                       negative_terms=None, per_page: int = 50, pages: int = 2, max_verify: int = 90,
-                      exclude_ids: set | None = None) -> tuple[dict[int, list[SourcedAsset]], dict]:
+                      exclude_ids: set | None = None, early_stop_mult: float = 1.5
+                      ) -> tuple[dict[int, list[SourcedAsset]], dict]:
     """FILM-WIDE sourcing + allocation — the structural fix for beat-by-beat depletion. `beats` is a
     list of {index, label, brief, n_min, n_target, approx_seconds}. Builds ONE candidate pool from the
     UNION of every beat's SUBJECT-ANCHORED query set (the film subject is forced into every query, so a
@@ -347,12 +348,22 @@ async def source_film(conn, providers, *, subject: str, beats: list[dict], targe
     considered = tuple((round(s, 3), c.asset_id) for s, c in eligible[:12])
 
     # 3) Verify each DISTINCT candidate ONCE (species+wild). clear → pool; uncertain → reserve.
+    # EARLY-STOP (6c): stop once the CLEAR pool comfortably exceeds Σn_target — enough headroom for
+    # allocation-by-fit without gathering multiples of what the film uses (the 40-min/54-clip run).
+    import math
+    from dataclasses import asdict as _asdict
+    stop_at = math.ceil(sum(b["n_target"] for b in beats) * max(early_stop_mult, 1.0))
     clear: list[SourcedAsset] = []
     reserve: list[SourcedAsset] = []
     verdicts: list[dict] = []
     contradictions = 0
     verified = 0
+    cache_hits = 0
+    stopped_early = False
     for score, cand in eligible:
+        if len(clear) >= stop_at:                        # EARLY-STOP — enough clear clips gathered
+            stopped_early = True
+            break
         if verified >= max_verify:
             break
         key = (cand.source, cand.asset_id)
@@ -364,9 +375,17 @@ async def source_film(conn, providers, *, subject: str, beats: list[dict], targe
         if asset is None:
             continue
         verified += 1
-        with tempfile.TemporaryDirectory(prefix="vgate-") as vd:
-            frames = _vision.sample_frames(asset.local_path, vd)
-            v = _vision.vision_check(frames, expect=expect, llm=llm, channel_id=channel_id, job_id=job_id)
+        # VERDICT CACHE (6c): a verdict is a property of (clip, subject), not the run — a cache hit skips
+        # the 3 Haiku frames entirely, so resumes/repeats never re-pay.
+        cached = await repo.vision_cache.get(conn, cand.source, cand.asset_id, subject)
+        if cached is not None:
+            v = _vision.VisionVerdict(**cached)
+            cache_hits += 1
+        else:
+            with tempfile.TemporaryDirectory(prefix="vgate-") as vd:
+                frames = _vision.sample_frames(asset.local_path, vd)
+                v = _vision.vision_check(frames, expect=expect, llm=llm, channel_id=channel_id, job_id=job_id)
+            await repo.vision_cache.put(conn, cand.source, cand.asset_id, subject, _asdict(v))
         category, drivers = _vision.classify(v, expect)
         rec = {"asset_id": cand.asset_id, "url": cand.page_url, "category": category,
                "species": v.species, "wild": v.wild, "season": v.season_ok, "habitat": v.habitat_ok,
@@ -424,14 +443,18 @@ async def source_film(conn, providers, *, subject: str, beats: list[dict], targe
         "verdicts": verdicts, "beats": beat_reports,
         "all_reached_min": all(br["reached_min"] for br in beat_reports),
         "allocated_total": sum(len(v) for v in alloc.values()),
+        "stopped_early": stopped_early, "stop_at": stop_at, "cache_hits": cache_hits,
     }
     await record_event(conn, "sourcing.film_pool",
                        message=f"film:{subject}: pool {len(union)} → {len(eligible)} eligible → "
                                f"{len(clear)} clear + {len(reserve)} reserve ({n_reject} rejected, "
-                               f"{contradictions} contradiction) → allocated {report['allocated_total']}",
+                               f"{contradictions} contradiction, {cache_hits} cached"
+                               + (f", EARLY-STOP@{stop_at}" if stopped_early else "")
+                               + f") → allocated {report['allocated_total']}",
                        channel_id=channel_id, job_id=job_id,
                        data={k: report[k] for k in ("pool_candidates", "eligible", "verified", "clear",
-                                                    "reserve", "rejected", "contradictions")})
+                                                    "reserve", "rejected", "contradictions", "stopped_early",
+                                                    "stop_at", "cache_hits")})
     return alloc, report
 
 

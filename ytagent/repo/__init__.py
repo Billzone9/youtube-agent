@@ -2,4 +2,4 @@
 (The audit `events` table has its own chokepoint in ytagent/events.py.)
 """
 from . import (approvals, channels, jobs, ledger, metadata, playbooks, sourcing,  # noqa: F401
-               subjects, videos)
+               subjects, videos, vision_cache)
