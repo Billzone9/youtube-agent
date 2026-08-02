@@ -43,6 +43,19 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## BLOCKS 6c — auto-scripts source poorly because briefs are written script-first, not footage-led
+- `[ ]` **Root cause found (see `DIAGNOSTIC_SOURCING_YIELD.md`).** Same subject `african elephant`
+  yielded 52 clear clips when its script was written to a probe's OBSERVED distribution (The Old Paths)
+  vs 8 clear when the ScriptWriter wrote briefs FIRST (macros, trunk close-ups, communication, archival
+  ivory-trade footage, ecological-impact shots the libraries lack). It is **(a) brief specificity →
+  (b) query construction** — NOT rate-limiting (0 search errors) and NOT the no-repeat guard
+  (`_source_all_beats` passes no `exclude_ids`; cached clips are reused; the 8 fresh-clear have zero
+  overlap with the 26 — different queries, not exclusion). **Recommended fix: footage-led auto-scripting**
+  — feed `probe_feasibility`'s observed season/habitat/time/shot distribution into the ScriptWriter (the
+  doctrine the elephant proved, not wired into the auto path) + forbid unsourceable/archival content.
+  This is a PREREQUISITE input to 6c's commissioning design, not optional polish. Diagnostic committed;
+  no fix built pending Banks's decision.
+
 ## Probe vs film-wide yield disagree (found in the 6b real run, 2026-08-02 — log, do not chase)
 - `[ ]` **The feasibility probe over-estimated giraffe.** `probe_feasibility('giraffe')` returned
   MARGINAL with E=17 and 9/10 both-match on its sample, but the full `source_film` run found only **5
