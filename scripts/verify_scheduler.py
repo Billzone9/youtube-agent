@@ -109,6 +109,19 @@ async def run():
         pick = await next_subject(conn, pb, llm=_FakeLLM(["freshsubject"]))
         check("proposals flow again after reset → 'freshsubject'", pick.subject == "freshsubject")
 
+        print("[8] Note 2 (deliberate): an UNRESOLVED 'proposed' row does NOT break an infeasible streak")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        # newest→oldest: infeasible, proposed(in-flight), infeasible, infeasible  → streak must count 3
+        await repo.subjects.record(conn, channel_id=cid, subject="s1", source="domain", status="infeasible")
+        await repo.subjects.record(conn, channel_id=cid, subject="s2", source="domain", status="infeasible")
+        await repo.subjects.record(conn, channel_id=cid, subject="s3", source="domain", status="proposed")
+        await repo.subjects.record(conn, channel_id=cid, subject="s4", source="domain", status="infeasible")
+        check("a 'proposed' between infeasibles is transparent → streak still 3",
+              await repo.subjects.trailing_infeasible(conn, cid, source="domain") == 3)
+        await repo.subjects.record(conn, channel_id=cid, subject="s5", source="domain", status="produced")
+        check("but a 'produced' DOES break the streak → 0",
+              await repo.subjects.trailing_infeasible(conn, cid, source="domain") == 0)
+
     finally:
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
         await conn.execute("DELETE FROM playbooks WHERE channel_id=%s", [cid])

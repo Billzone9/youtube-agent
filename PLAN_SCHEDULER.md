@@ -237,7 +237,13 @@ the work actually is; I'd rather prove it than rush it.
   `production_state` + idempotent skip-on-resume + the spend estimate/gate. The big one; crash/resume
   is proven here. *(~1–1.5 sessions)*
 - **6c — The polling runner + failure routing:** `tick`/`run_forever`, `FOR UPDATE SKIP LOCKED`,
-  cadence, retries/backoff, the full failure matrix, restart survival. *(~1 session)*
+  **cadence COMPUTATION** (turning `{"per_week": 2}` → the next `next_run_at`), retries/backoff, the
+  full failure matrix, restart survival. *(~1 session)*
+  - **NOTE 1 (explicit deferral):** as of 6a, `next_run_at` is STORED and `playbooks.due()` reads it,
+    but NOTHING yet computes it from `cadence` — `{"per_week": 2}` does not become a timestamp until
+    6c. So the headline "make wildlife documentaries twice a week" is not schedulable until 6c lands;
+    6a/6b produce on demand (a subject handed in), 6c adds the clock. Called out here so it is a
+    deliberate deferral, not an implicit gap.
 - **6d — Control + integration:** the Telegram command ("twice a week"), spend/blocker alerts wired,
   end-to-end unattended proof on the Mac, the compose `scheduler` service. *(~0.5 session)*
 

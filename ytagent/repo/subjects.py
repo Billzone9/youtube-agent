@@ -38,8 +38,14 @@ async def used_subjects(conn, channel_id: int) -> set[str]:
 
 
 async def trailing_infeasible(conn, channel_id: int, *, source: str = "domain", limit: int = 20) -> int:
-    """Consecutive most-recent proposals (of `source`) resolved INFEASIBLE, i.e. the run-length of the
-    domain loop's failures since its last non-infeasible outcome. Drives Amendment 3's cap."""
+    """Consecutive most-recent proposals (of `source`) RESOLVED as INFEASIBLE — the run-length of the
+    domain loop's failures since its last non-infeasible RESOLVED outcome. Drives Amendment 3's cap.
+
+    DELIBERATE DECISION (Note 2): an UNRESOLVED 'proposed' row is SKIPPED, not treated as a break. An
+    in-flight proposal sitting between two infeasibles must not reset the run — otherwise a slow probe
+    mid-flight would mask a genuine infeasible streak and let the loop churn past the cap. The cap
+    counts resolved-infeasible outcomes; pending ones are transparent to it. A 'produced'/'selected'/
+    'failed' (a real non-infeasible resolution) DOES break the run. Tested in verify_scheduler [8]."""
     cur = await conn.execute(
         "SELECT status FROM channel_subjects WHERE channel_id = %s AND source = %s "
         "ORDER BY created_at DESC, id DESC LIMIT %s",
@@ -49,9 +55,9 @@ async def trailing_infeasible(conn, channel_id: int, *, source: str = "domain", 
         if r["status"] == "infeasible":
             n += 1
         elif r["status"] == "proposed":
-            continue                      # not yet resolved — skip, keep scanning back
+            continue                      # UNRESOLVED — transparent to the streak (deliberate; see above)
         else:
-            break                         # a produced/selected/failed breaks the infeasible run
+            break                         # a produced/selected/failed RESOLUTION breaks the run
     return n
 
 
