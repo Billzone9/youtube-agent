@@ -84,8 +84,17 @@ MUST skip on resume, so a crash after spend never re-charges.
 | 8 | `submitted` | Telegram approval sent | — (human gate) | resend if not yet sent |
 
 Resume = the runner reads the job's stage and re-enters at the first *incomplete* stage, rebuilding
-from `production_state` (script path, allocation, narration paths, cue map, bed path). The **spend gate
-sits between stage 4 and 5** — the last free moment before real money.
+from `production_state` (script path, allocation, narration paths, cue map, bed path).
+
+**Two spend checks sit between stage 4 and 5** — the last free moment before real money (Amendment 1):
+1. **Per-job:** `estimate > per_job_threshold_gbp` → pause this job, ask for spend approval.
+2. **Rolling ceiling (the seatbelt for the whole slice):** `budget_status().month_spend_gbp + estimate >
+   ceiling_gbp` → **pause the PLAYBOOK** (`state=paused_ceiling`), alert, and do NOT proceed. This is
+   the hole a per-job gate leaves open: a playbook running twice a week, every job under threshold,
+   spends continuously and nothing catches the *aggregate* until the monthly ceiling is already
+   breached. So the check is aggregate-vs-global, run before EVERY production starts, using the
+   `budget_status` + cost-ledger data that already exist. (This is a per-job *pre-flight* against the
+   ceiling — NOT the §4.10 ROI/ROAS governor, which stays OUT.)
 
 **Failure routing** (what retries, what advances, what stops):
 
@@ -95,31 +104,44 @@ sits between stage 4 and 5** — the last free moment before real money.
 | Probe `INCONCLUSIVE-SHALLOW` | expected | ONE broadened re-probe; still shallow → reject, next | no |
 | Probe `MARGINAL` | policy | `playbook.min_verdict` decides (default = FEASIBLE only → skip, next) | no |
 | Sourcing shortfall (`ProductionError`, pre-TTS) | expected | fail job, pick next subject — **no spend lost** | no |
-| Estimate > `per_job_threshold_gbp` | **gate** | PAUSE at stage 4→5, alert for **spend approval** | **YES (spend)** |
+| Estimate > `per_job_threshold_gbp` | **gate** | PAUSE job at stage 4→5, alert for **spend approval** | **YES (spend)** |
+| month-to-date + estimate > `ceiling_gbp` | **gate** | PAUSE playbook (`paused_ceiling`), alert — do NOT proceed | **YES (spend)** |
 | TTS scope/401 (`TTSScopeError`) | config | **STOP the runner**, alert — nothing can be produced | **YES (blocker)** |
-| TTS/music transient (5xx/network) | transient | retry ≤3 with backoff; then fail + alert | on give-up |
+| TTS/music **transient** (5xx/network/timeout) | transient | retry ≤3 with backoff; then fail + alert | on give-up |
 | Hissy music after 1 regen | quality | drop that layer, ship without (already handled) | no |
-| Render / ffmpeg error | transient/bug | retry ≤1; then fail + alert; **resume reuses spent assets** | on give-up |
-| Noise gate HARD-fail | quality | retry ≤1; then fail + alert — **never ship hiss** | on give-up |
+| Render / ffmpeg invocation error | **deterministic** | fail ONCE, alert, **preserve spent assets** — no retry | **YES** |
+| Density gate / Noise gate HARD-fail | **deterministic** | fail ONCE, alert, preserve assets — **never re-render to fail identically** | **YES** |
 | Machine sleep / mid-run restart | infra | job row holds `stage`; runner resumes at next stage, **no re-spend** | no |
 | Subject pool exhausted | policy | pause the playbook, alert "pool empty — add subjects" | **YES** |
 | MISPLACED upload (publish slice) | safety | already records + alerts | **YES** |
 
-Retries use a `attempts` counter + `next_attempt_at` on the job so a poisoned job can't spin forever;
-on exhausting retries the job goes `failed` with the error preserved (it already is — `jobs.error`) and
-Banks is alerted once, not per-attempt. A `failed` production job never silently re-runs at full cost:
-resumption is opt-in (the runner only resumes jobs in a resumable state, not `failed` ones, unless Banks
-re-queues).
+**Transient vs deterministic is a hard split (Amendment 2).** Only transient failures (network, 5xx,
+timeouts) retry — with backoff, bounded by `attempts`. **Deterministic failures do NOT retry:** a
+render is deterministic (same spec + same clips → same master), and a noise/density HARD-fail means an
+upstream artifact is bad, not that we were unlucky — retrying burns ~20 minutes to fail identically.
+Those fail ONCE, alert, and **preserve the spent assets** (narration + cues + allocation stay on disk in
+`production_state`) so that after Banks fixes the cause the job resumes from the render stage without
+re-spending a penny. Waste no compute proving the same thing twice.
+
+Retries use `attempts` + `next_attempt_at` on the job so a poisoned job can't spin forever; on exhaust
+(or on a deterministic failure) the job goes `failed` with `jobs.error` preserved and Banks alerted
+ONCE. A `failed` job never silently re-runs at full cost — resumption is opt-in: the runner resumes only
+resumable-state jobs, and a `failed` one is re-entered only when Banks re-queues it (which then reuses
+the preserved assets).
 
 ### 3. What Banks still controls (check this list against what you want to be asked)
 
 **REACHES YOU (gated or alerted):**
 1. **Publish** — every finished video → the existing Telegram approval (private upload; and, separately,
    public via the publish slice). Unchanged.
-2. **Spend above threshold** — a job whose *estimated* cost (TTS chars + music credits, priced) exceeds
-   `playbook.per_job_threshold_gbp` PAUSES before spending and asks. Below threshold: autonomous.
-3. **Hard blockers (alert, not a routine ask):** TTS scope broken; a job that exhausted render/noise
-   retries; subject pool exhausted; a MISPLACED upload.
+2. **Spend above per-job threshold** — a job whose *estimated* cost (TTS chars + music credits, priced)
+   exceeds `playbook.per_job_threshold_gbp` PAUSES before spending and asks. Below threshold: autonomous.
+3. **Rolling ceiling (Amendment 1)** — before EVERY production, month-to-date spend + this job's estimate
+   is checked against the GLOBAL `ceiling_gbp`; if it would exceed, the playbook pauses
+   (`paused_ceiling`) and asks. This is the aggregate seatbelt many-cheap-videos would otherwise slip.
+4. **Hard blockers (alert, not a routine ask):** TTS scope broken; a deterministic render/gate failure
+   (fails once, preserved for your fix); subject pool exhausted; **3 consecutive infeasible domain
+   proposals** (Amendment 3); a MISPLACED upload.
 
 **NEVER REACHES YOU (autonomous):** subject selection; probe verdicts; rejecting an infeasible subject
 and advancing; script commissioning; sourcing (incl. a shortfall that advances to the next subject);
@@ -137,12 +159,16 @@ Telegram later): `cadence`, `per_job_threshold_gbp`, `min_verdict`, `subject_poo
   (`{"per_week":2}` or a cron-ish spec), `subject_pool` jsonb (explicit list) and/or `domain` text
   (LLM proposes candidates when the pool empties), `format` text (`16:9` for now), `min_verdict` text
   (default `FEASIBLE`), `per_job_threshold_gbp` numeric, `runtime_target_s` int, `n_beats` int,
-  `next_run_at` timestamptz, `state` text (`idle|producing|paused_spend|paused_pool|blocked`),
-  `updated_at`. This is the scheduler's control surface. Cadence/approval already partly live in
-  `channels.config`; the playbook is the *schedulable* policy and references the channel for voice/tone.
-- **`channel_subjects`** (new): `channel_id`, `subject`, `status` (`selected|produced|infeasible|failed`),
-  `job_id`, `verdict`, timestamps. Powers **no-repeat** (skip `produced`; cool-down `infeasible`) and
-  gives the dashboard a real record of what each channel has attempted.
+  `next_run_at` timestamptz, `state` text
+  (`idle|producing|paused_spend|paused_ceiling|paused_pool|blocked`), `updated_at`. This is the
+  scheduler's control surface. Cadence/approval already partly live in `channels.config`; the playbook
+  is the *schedulable* policy and references the channel for voice/tone.
+- **`channel_subjects`** (new): `channel_id`, `subject`, `source` (`pool|domain`), `status`
+  (`proposed|selected|produced|infeasible|failed`), `verdict` text (the probe verdict), `pool_depth`
+  int (the probe's E), `job_id`, timestamps. Powers **no-repeat** (skip `produced`; cool-down
+  `infeasible`) AND — Amendment 3 — records **EVERY proposed subject with its probe verdict and pool
+  depth**, so the future learning loop has the raw material for "which kinds of subject can this channel
+  actually make." It also drives the consecutive-infeasible cap (below).
 - **`jobs`** — REUSED as the queue. Add nothing structural; carry `production_state` in `jobs.result`
   (or `payload`) and use `stage` for the checkpoint. Add a small migration only for a retry counter
   (`attempts` int default 0, `next_attempt_at` timestamptz null) so the runner can back off.
@@ -158,8 +184,12 @@ Telegram later): `cadence`, `per_job_threshold_gbp`, `min_verdict`, `subject_poo
   pass: due playbooks → create/advance jobs) and `run_forever()` (the poll loop). `python -m
   ytagent.scheduler` is the entrypoint.
 - `ytagent/scheduler/selection.py` — `next_subject(conn, playbook)`: pick from `subject_pool` minus
-  `channel_subjects.produced`; if pool exhausted and a `domain` is set, ask the LLM for N fresh
-  candidates (deduped against history), else pause+alert.
+  `channel_subjects.produced`; if the pool is exhausted and a `domain` is set, ask the LLM for fresh
+  candidates (deduped against ALL history). **Amendment 3 — the domain loop is BOUNDED:** cap
+  **consecutive infeasible proposals at 3** before pausing (`paused_pool`) and asking Banks — a
+  domain-driven loop is exactly where the wolf came from (sounded right, unmakeable), so it must not
+  churn probe cost indefinitely. Every proposal is written to `channel_subjects` with its verdict +
+  pool depth, whatever the outcome.
 - `ytagent/scheduler/state.py` — the production STATE MACHINE: `advance(conn, job, …)` runs the next
   stage, persisting `production_state`; idempotent skip-on-resume; the spend gate between 4→5.
 - `ytagent/scheduler/cost.py` — `estimate_production_cost(script)` (TTS chars×rate + planned music
@@ -199,8 +229,10 @@ My estimates have run optimistic all project, so here is the real number: **3–
 provable sub-slices (each committed, each green before the next). The heart — resumability — is where
 the work actually is; I'd rather prove it than rush it.
 
-- **6a — Playbook + selection (data):** `playbooks`/`channel_subjects` tables + repos, `next_subject`
-  with no-repeat, seed. Offline-verified. *(~1 session)*
+- **6a — Playbook + selection (data):** `playbooks`/`channel_subjects` tables + repos (incl. the
+  `paused_ceiling` state and the `verdict`/`pool_depth`/`source` columns from the amendments),
+  `next_subject` with no-repeat + the consecutive-infeasible cap (Amendment 3, testable offline by
+  seeding history), seed. Offline-verified. *(~1 session)*
 - **6b — Resumable production state machine:** refactor `produce_video` into checkpointed stages +
   `production_state` + idempotent skip-on-resume + the spend estimate/gate. The big one; crash/resume
   is proven here. *(~1–1.5 sessions)*
