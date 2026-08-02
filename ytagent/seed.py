@@ -21,6 +21,8 @@ from .db import sync_connect
 
 WILDLIFE_CONFIG = {
     "youtube_handle": "@TheTalesofWildlifeandNature",
+    "youtube_channel_id": "UCRkrZa2yjLLw-f67H2pYI2g",   # verified from real upload responses; the
+    #   publisher asserts every insert/update lands here (never the ocean-stream channel)
     "niche": "wildlife & nature documentaries",
     "purpose": "lush, accurate long-form wildlife films that grow watch-hours toward monetisation",
     "tone": "poetic narration on the surface, accurate fact underneath",

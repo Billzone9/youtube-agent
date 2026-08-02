@@ -43,6 +43,23 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## SECURITY — the YouTube token permits FAR more than the agent uses (publish slice, 2026-08-02)
+- `[ ]` **`youtube.force-ssl` is broad; the restriction is our CODE SURFACE + the Telegram gate, NOT the
+  scope.** There is NO "only videos this app uploaded" OAuth scope — force-ssl (needed for videos.update
+  → set metadata + flip public) also grants **delete videos, manage playlists, post/moderate comments,
+  edit captions, and change channel branding**. The agent never does any of those because *no code path
+  exists* for them, and publishing is Telegram-gated. **REVIEW RULE:** any future code that touches the
+  YouTube client (`ytagent/youtube.py`) must be reviewed against this — the token will happily perform
+  far more than the agent should ever do. Keep `youtube.py` the single write surface: `publish` (insert,
+  private-locked) + `update_public` (own-DB-ids only, channel-asserted). Do not add delete/list/playlist/
+  comment/branding calls without an explicit, gated, reviewed reason. Consider (later) a periodic audit
+  that lists what the token *could* do vs what our code *does*, so drift is visible.
+- `[ ]` **Elephant #61 metadata bookkeeping (minor, not blocking).** EY9DhJdnt_w's LIVE description is
+  guard-CLEAN (verified — Amendment B), but its `video_metadata` row shows `applied_at=NULL` though the
+  text is live (set at upload). A cosmetic bookkeeping gap in the mark-applied path for that older
+  upload; the live text is correct. Reconcile when the elephant is next considered for public (out of
+  scope for the lion-only publish slice).
+
 ## Audio-design slice — deferred polish (from the elephant end-to-end run, 2026-08-01)
 - `[ ]` **SFX (sound-generation) scope is BLOCKED** — the ElevenLabs key 401s on `/v1/sound-generation`
   ("key lacks the sfx scope"). Pre-flighted live; the film shipped WITHOUT SFX (graceful degradation,

@@ -16,6 +16,7 @@ from psycopg.types.json import Jsonb
 from . import repo
 from .budget import budget_status
 from .events import record_event
+from .publish import PRIVACY_LOCKED, ChannelMismatchError   # runtime — plain values, no googleapiclient
 
 if TYPE_CHECKING:  # avoid importing transports/impls at runtime
     from .metadata.description import Description
@@ -60,25 +61,96 @@ def _format_approval_text(video: dict, channel: dict, budget: dict, publish_mode
     )
 
 
-def _resolved_text(video: dict, result: "PublishResult", decided_by: str) -> str:
+def _resolved_text(video: dict, result: "PublishResult", decided_by: str, *, is_publish: bool = False) -> str:
     if result.mode == "live":
         vid = result.youtube_video_id
+        if is_publish:
+            return (
+                f"✅ <b>Published — PUBLIC</b> by {decided_by}\n"
+                f"<b>{video['title']}</b> is live (clean description).\n"
+                f"YouTube id: <code>{vid}</code>\n"
+                f'Watch: <a href="https://youtu.be/{vid}">youtu.be/{vid}</a>  —  please confirm visually.'
+            )
         return (
             f"✅ <b>Published (private)</b> by {decided_by}\n"
             f"<b>{video['title']}</b>\n"
             f"YouTube id: <code>{vid}</code>\n"
             f'Verify (private): <a href="https://studio.youtube.com/video/{vid}/edit">YouTube Studio</a>'
         )
-    val = result.validation
     st = result.body["status"]
-    return (
+    action = "would go PUBLIC (videos.update)" if is_publish else "no real upload"
+    text = (
         f"✅ <b>Approved</b> by {decided_by}\n"
-        f"<b>{video['title']}</b> — DRY RUN published (no real upload).\n"
+        f"<b>{video['title']}</b> — DRY RUN ({action}).\n"
         f"privacyStatus: <code>{st['privacyStatus']}</code>  •  "
-        f"synthetic-media disclosed: <code>true</code>\n"
-        f"file check: {'✅ size matches' if val['size_matches'] else '⚠️ size mismatch'} "
-        f"({val['size_bytes_actual']} bytes)"
+        f"synthetic-media disclosed: <code>true</code>"
     )
+    val = result.validation or {}
+    if "size_matches" in val:   # insert dry-run carries a media check; the update path does not
+        text += (f"\nfile check: {'✅ size matches' if val['size_matches'] else '⚠️ size mismatch'} "
+                 f"({val.get('size_bytes_actual')} bytes)")
+    return text
+
+
+def _format_publish_public_text(video: dict, channel: dict, clean: dict, publish_mode: str) -> str:
+    """Card for PUBLISHING an already-uploaded video to PUBLIC with a clean description. The channel id
+    is shown + verified so a documentary can never be flipped public on the wrong channel silently."""
+    handle = (channel.get("config") or {}).get("youtube_handle") or channel["name"]
+    chan_id = (channel.get("config") or {}).get("youtube_channel_id") or "—"
+    yt = video.get("youtube_video_id")
+    desc = (clean.get("description") or "")
+    preview = (desc[:280] + "…") if len(desc) > 280 else desc
+    if publish_mode == "live":
+        action = (f"🌐 On approval: sets the CLEAN description and flips <b>{yt}</b> to <b>PUBLIC</b> on "
+                  f"{handle}\n(channel <code>{chan_id}</code> — verified before the write). You confirm "
+                  "visually after.")
+    else:
+        action = "⚠️ DRY RUN — builds + guard-scans the public body, no real change."
+    return (
+        f"🌐 <b>Approval needed — PUBLISH (go public)</b>\n"
+        f"Channel: <b>{channel['name']}</b>  •  <code>{chan_id}</code>\n"
+        f"Video: <b>{clean.get('title')}</b>\n"
+        f"Already uploaded (private): <code>{yt}</code>\n\n"
+        f"New public description (clean, guard-passed):\n<code>{preview}</code>\n\n"
+        f"{action}"
+    )
+
+
+async def submit_publish_for_approval(
+    conn, notifier: "Notifier", *, channel: dict, video: dict, clean: dict, chat_id: str,
+    publish_mode: str = "dry_run",
+) -> dict:
+    """Gate PUBLISHING an already-uploaded video to PUBLIC with a clean, guard-passed description.
+    `video` is the existing (private) video row; `clean` is the authored version to apply
+    (id/version/title/description/tags). Creates a `publish_public` job + approval and sends the card.
+    handle_decision routes on job.type: on approve it calls publisher.update_public (videos.update)."""
+    from .metadata.guard import assert_no_internal_artifacts
+    assert_no_internal_artifacts(clean["title"], clean["description"], *(clean.get("tags") or []))
+    payload = {
+        "action": "publish_public", "publish_mode": publish_mode,
+        "video_id": video["id"], "youtube_video_id": video.get("youtube_video_id"),
+        "metadata_id": clean["id"], "metadata_version": clean.get("version"),
+        "clean": {"title": clean["title"], "description": clean["description"],
+                  "tags": list(clean.get("tags") or [])},
+    }
+    async with conn.transaction():
+        job = await repo.jobs.create(conn, channel_id=channel["id"], type="publish_public",
+                                     status="awaiting_approval", stage="publish", payload=payload)
+        approval = await repo.approvals.create(
+            conn, channel_id=channel["id"], job_id=job["id"], kind="publish", telegram_chat_id=chat_id)
+        await record_event(
+            conn, "publish_public_submitted",
+            message=f"submitted '{clean['title']}' to go PUBLIC (video {video.get('youtube_video_id')})",
+            channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+            data={"video_id": video["id"], "metadata_version": clean.get("version")})
+    text = _format_publish_public_text(video, channel, clean, publish_mode)
+    message_id = await notifier.send_approval_request(chat_id=chat_id, text=text, approval_id=approval["id"])
+    async with conn.transaction():
+        approval = await repo.approvals.set_message_id(conn, approval["id"], message_id)
+        await record_event(conn, "approval_requested", message="sent Telegram approval request",
+                           channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+                           data={"telegram_message_id": message_id})
+    return {"job": job, "approval": approval, "message_id": message_id}
 
 
 async def submit_video_for_approval(
@@ -145,22 +217,27 @@ async def handle_decision(
         if approval is None:
             return {"handled": False, "reason": "already_decided_or_missing", "approval_id": approval_id}
         job = await repo.jobs.get(conn, approval["job_id"])
-        video = await repo.videos.get_by_job(conn, approval["job_id"])
         channel = await repo.channels.get_by_id(conn, approval["channel_id"])
+        payload = job.get("payload") or {}
+        is_publish = job.get("type") == "publish_public"
+        # publish_public acts on an EXISTING uploaded video (by payload id); upload uses the job's video.
+        video = (await repo.videos.get(conn, payload["video_id"]) if is_publish
+                 else await repo.videos.get_by_job(conn, approval["job_id"]))
         await record_event(
             conn, f"approval_{state}", message=f"approval {state} by {decided_by}",
             channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
         )
         if decision == "reject":
             await repo.jobs.set_status(conn, job["id"], "rejected")
-            await repo.videos.set_status(conn, video["id"], "rejected")
+            await repo.videos.set_status(conn, video["id"], "rejected" if not is_publish else video["status"])
         else:
             await repo.jobs.set_status(conn, job["id"], "running")
-            await repo.videos.set_status(conn, video["id"], "uploading")
+            await repo.videos.set_status(conn, video["id"], "publishing" if is_publish else "uploading")
             await record_event(
-                conn, "upload_started", message=f"{publisher.mode} publish started",
+                conn, "upload_started",
+                message=f"{publisher.mode} {'publish-to-public' if is_publish else 'upload'} started",
                 channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
-                data={"mode": publisher.mode},
+                data={"mode": publisher.mode, "action": job.get("type")},
             )
 
     chat_id = approval.get("telegram_chat_id")
@@ -174,15 +251,29 @@ async def handle_decision(
             )
         return {"handled": True, "decision": "reject", "job_id": job["id"]}
 
+    verb = "publishing (public)" if is_publish else "uploading"
     if publisher.mode == "live" and msg_id:
         await notifier.update_resolved(
             chat_id=chat_id, message_id=msg_id,
-            text=f"⏳ <b>Approved</b> — uploading <b>{video['title']}</b> to YouTube (private)…",
+            text=f"⏳ <b>Approved</b> — {verb} <b>{video['title']}</b>…",
         )
 
-    # --- Phase 2: the publish — NO DB transaction held ---
+    # For publish_public, overlay the clean authored snippet onto the video IN MEMORY (the DB record is
+    # only updated once the write actually succeeds — never before).
+    if is_publish:
+        clean = payload.get("clean") or {}
+        video = {**video, "title": clean.get("title") or video["title"],
+                 "description": clean.get("description") or video.get("description"),
+                 "tags": clean.get("tags") or video.get("tags")}
+
+    # --- Phase 2: the write — NO DB transaction held ---
     try:
-        result = await publisher.publish(video, channel)
+        result = await (publisher.update_public(video, channel) if is_publish
+                        else publisher.publish(video, channel))
+    except ChannelMismatchError as e:   # Amendment A BACKSTOP — the write may have landed on the WRONG
+        return await _record_misplaced(  # channel (insert is irreversible); record + alert, don't publish
+            conn, notifier, channel=channel, job=job, video=video, approval=approval,
+            chat_id=chat_id, msg_id=msg_id, err=e)
     except Exception as e:  # noqa: BLE001 — record any failure and surface it
         async with conn.transaction():
             await repo.jobs.set_status(conn, job["id"], "failed", error=str(e))
@@ -194,29 +285,42 @@ async def handle_decision(
         if msg_id:
             await notifier.update_resolved(
                 chat_id=chat_id, message_id=msg_id,
-                text=f"⚠️ <b>Upload failed</b>\n<b>{video['title']}</b>\n<code>{e}</code>",
+                text=f"⚠️ <b>{'Publish' if is_publish else 'Upload'} failed</b>\n"
+                     f"<b>{video['title']}</b>\n<code>{e}</code>",
             )
         return {"handled": True, "decision": "approve", "job_id": job["id"], "error": str(e)}
 
     # --- Phase 3: persist the result (txn) ---
     async with conn.transaction():
+        # A DRY RUN changes NOTHING on YouTube — never record 'public' privacy for it (it would be a lie
+        # in the DB). Only a real (live) call may persist the result's privacy_status.
+        persisted_privacy = result.privacy_status if result.mode == "live" else PRIVACY_LOCKED
         await repo.videos.set_published(
             conn, video["id"], youtube_video_id=result.youtube_video_id,
-            privacy_status=result.privacy_status, published_at=result.published_at,
+            privacy_status=persisted_privacy, published_at=result.published_at,
             status=result.video_status,
         )
-        # A real upload SETS the description at insert, so the authored version is now live — record
-        # that truthfully. (Dry-run applies nothing; the version stays authored-but-not-live.)
         if result.mode == "live":
-            meta = await repo.metadata.get_latest_authored(conn, video["id"])
-            if meta is not None and meta.get("applied_at") is None:
+            if is_publish:
+                # the videos.update SET the clean snippet + public — the applied version is now live
                 await repo.metadata.mark_applied(
-                    conn, meta["id"], applied_at=result.published_at, applied_via="upload_insert"
-                )
+                    conn, payload["metadata_id"], applied_at=result.published_at,
+                    applied_via="update_publish")
+            else:
+                # a real insert SETS the description at upload, so the latest authored version is now live
+                meta = await repo.metadata.get_latest_authored(conn, video["id"])
+                if meta is not None and meta.get("applied_at") is None:
+                    await repo.metadata.mark_applied(
+                        conn, meta["id"], applied_at=result.published_at, applied_via="upload_insert")
         await repo.jobs.set_status(conn, job["id"], result.job_status, result=result.to_dict())
-        ev_type = "published" if result.mode == "live" else "dry_run_published"
-        ev_msg = ("published PRIVATELY to YouTube" if result.mode == "live"
-                  else "DRY RUN — would publish (no real upload)")
+        if is_publish:
+            ev_type = "published_public" if result.mode == "live" else "dry_run_published"
+            ev_msg = ("published PUBLICLY to YouTube (clean description)" if result.mode == "live"
+                      else "DRY RUN — would publish to public (no real change)")
+        else:
+            ev_type = "published" if result.mode == "live" else "dry_run_published"
+            ev_msg = ("published PRIVATELY to YouTube" if result.mode == "live"
+                      else "DRY RUN — would publish (no real upload)")
         await record_event(
             conn, ev_type, message=ev_msg, channel_id=channel["id"], job_id=job["id"],
             approval_id=approval["id"], data=result.to_dict(),
@@ -224,12 +328,41 @@ async def handle_decision(
 
     if msg_id:
         await notifier.update_resolved(
-            chat_id=chat_id, message_id=msg_id, text=_resolved_text(video, result, decided_by)
-        )
+            chat_id=chat_id, message_id=msg_id,
+            text=_resolved_text(video, result, decided_by, is_publish=is_publish))
     return {
         "handled": True, "decision": "approve", "job_id": job["id"],
         "video_id": video["id"], "result": result.to_dict(),
     }
+
+
+async def _record_misplaced(conn, notifier, *, channel, job, video, approval, chat_id, msg_id,
+                            err: ChannelMismatchError) -> dict:
+    """Amendment A: an upload/update landed on the WRONG channel. Insert is irreversible, so record the
+    stray video MISPLACED (never 'published'), store its id, and alert Banks to delete it by hand."""
+    async with conn.transaction():
+        await repo.jobs.set_status(conn, job["id"], "failed", error=str(err))
+        await repo.videos.set_published(
+            conn, video["id"], youtube_video_id=err.youtube_video_id, privacy_status="private",
+            published_at=None, status="misplaced")
+        await record_event(
+            conn, "upload_misplaced",
+            message=f"CHANNEL MISMATCH — stray video {err.youtube_video_id} on {err.actual!r}, "
+                    f"expected {err.expected!r}; recorded MISPLACED (not published)",
+            channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+            data={"youtube_video_id": err.youtube_video_id, "actual_channel": err.actual,
+                  "expected_channel": err.expected})
+    alert = (f"🚨 <b>MISPLACED — wrong channel</b>\n<b>{video['title']}</b>\n"
+             f"Landed on <code>{err.actual}</code>, expected <code>{err.expected}</code>.\n"
+             f"Stray video id: <code>{err.youtube_video_id}</code>\n"
+             f"NOT published. DELETE IT MANUALLY: "
+             f"https://studio.youtube.com/video/{err.youtube_video_id}/edit")
+    if msg_id:
+        await notifier.update_resolved(chat_id=chat_id, message_id=msg_id, text=alert)
+    else:
+        await notifier.notify(chat_id=chat_id, text=alert)
+    return {"handled": True, "decision": "approve", "job_id": job["id"], "misplaced": True,
+            "youtube_video_id": err.youtube_video_id}
 
 
 # --- Slice 3: assembly job + one-line completion ping (reuses the Notifier seam) --------------

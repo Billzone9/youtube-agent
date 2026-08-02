@@ -1,14 +1,21 @@
-"""One-time OAuth consent to obtain a DURABLE YouTube upload refresh token.
+"""One-time OAuth consent to obtain a DURABLE YouTube refresh token that can UPLOAD *and* PUBLISH.
 
 Run ON THE MAC (needs a browser — never in the container):
     ./.venv/bin/python -m ytagent.youtube_auth
 
 Opens a browser: Banks signs in with the Google account that owns the channel, SELECTS
-"The Tales of Wildlife and Nature" at the chooser, and grants the single youtube.upload scope.
-The refresh token is written to .env as YOUTUBE_REFRESH_TOKEN and NEVER printed. Then restart
-the bot. Prerequisites (Banks, in Google Cloud Console): YouTube Data API v3 enabled; the OAuth
-client is a "Desktop app" type; the consent screen is in "Production" (a "Testing" screen issues
-tokens that expire in 7 days).
+"The Tales of Wildlife and Nature" at the chooser, and grants the youtube.force-ssl scope.
+The refresh token is written to .env as YOUTUBE_REFRESH_TOKEN and NEVER printed. Then restart the bot.
+
+SCOPE CHANGE — READ THIS. The scope is now `youtube.force-ssl` (was `youtube.upload`). force-ssl is
+required for videos.update (set metadata + flip a video public); there is NO narrower "only videos this
+app uploaded" scope (see BACKLOG). force-ssl also grants delete/playlists/comments/captions/branding —
+the agent NEVER uses those; the restriction is our code surface + the Telegram gate, not the scope.
+Because the scope set CHANGED, the old upload-only token does NOT gain update rights — a FRESH consent
+is required, and you may need to REVOKE the app's prior access first so Google issues a new refresh
+token. Prerequisites (Banks, in Google Cloud Console): YouTube Data API v3 enabled; the OAuth client is
+a "Desktop app" type; ADD `.../auth/youtube.force-ssl` to the consent screen's scopes; the consent
+screen is in "Production" (a "Testing" screen issues tokens that expire in 7 days).
 """
 from __future__ import annotations
 
@@ -17,7 +24,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 from .config import load_settings
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 
 
 def main() -> None:
@@ -38,7 +45,7 @@ def main() -> None:
 
     print("A browser window will open.")
     print('Sign in with the Google account that owns "The Tales of Wildlife and Nature",')
-    print("select THAT channel at the chooser, and grant upload access.")
+    print("select THAT channel at the chooser, and grant access (youtube.force-ssl: upload + manage).")
     # access_type=offline + prompt=consent guarantees a refresh_token is returned.
     creds = flow.run_local_server(port=0, prompt="consent", access_type="offline")
 

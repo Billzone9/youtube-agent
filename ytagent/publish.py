@@ -15,7 +15,22 @@ from typing import Any, Protocol
 
 from .metadata.guard import assert_no_internal_artifacts
 
-PRIVACY_LOCKED = "private"  # never unlisted/public — Banks flips to public himself, by hand
+PRIVACY_LOCKED = "private"  # INSERT is always private — a new upload is never born public
+PRIVACY_PUBLIC = "public"   # only reachable via the gated update_public path (Telegram-approved)
+
+
+class ChannelMismatchError(RuntimeError):
+    """A video landed on / targets a channel other than the one the channel record expects. Carries the
+    stray youtube_video_id (when the irreversible insert already happened) for manual deletion. Defined
+    here (not in youtube.py) so the orchestrator can catch it WITHOUT importing googleapiclient."""
+
+    def __init__(self, *, youtube_video_id: str | None, actual: str | None, expected: str) -> None:
+        self.youtube_video_id = youtube_video_id
+        self.actual = actual
+        self.expected = expected
+        super().__init__(
+            f"channel mismatch: video is on {actual!r}, expected {expected!r}"
+            + (f" (stray video id {youtube_video_id})" if youtube_video_id else ""))
 
 
 @dataclass(frozen=True)
@@ -82,6 +97,35 @@ def build_youtube_body(video: dict, channel: dict) -> dict:
     }
 
 
+def build_public_update_body(video: dict, channel: dict) -> dict:
+    """The snippet+status for a videos.UPDATE that publishes an already-uploaded video to PUBLIC with a
+    CLEAN description. Used ONLY by the gated update_public path. `video` must already carry the clean
+    (guard-passing) title/description/tags — the caller sets them from the latest authored version."""
+    cfg = channel.get("config") or {}
+    lang = video.get("primary_language") or cfg.get("primary_language") or "en"
+    title = (video["title"] or "")[:100]
+    description = video.get("description") or ""
+    tags = list(video.get("tags") or cfg.get("default_tags") or [])
+    assert_no_internal_artifacts(title, description, *tags)   # boundary guard — no leak reaches public
+    return {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "categoryId": str(cfg.get("youtube_category_id", "15")),
+            "defaultLanguage": lang,
+            "defaultAudioLanguage": lang,
+        },
+        "status": {
+            "privacyStatus": PRIVACY_PUBLIC,      # PUBLIC — reachable only here, behind the Telegram gate
+            "selfDeclaredMadeForKids": False,
+            "containsSyntheticMedia": True,
+            "license": "youtube",
+            "embeddable": True,
+        },
+    }
+
+
 def validate_media(video: dict) -> dict:
     path = video["file_path"]
     exists = os.path.exists(path)
@@ -124,3 +168,13 @@ class DryRunPublisher:
                 },
             },
         )
+
+    async def update_public(self, video: dict, channel: dict) -> PublishResult:
+        """Dry-run of the gated publish-to-public: builds + guard-scans the exact public body, no API."""
+        body = build_public_update_body(video, channel)
+        return PublishResult(
+            mode="dry_run", privacy_status=PRIVACY_PUBLIC, job_status="published_dryrun",
+            video_status="published_dryrun", youtube_video_id=video.get("youtube_video_id"),
+            published_at=None, body=body, validation={},
+            raw={"dry_run": True, "would_call": "youtube.videos.update",
+                 "part": ["snippet", "status"], "video_id": video.get("youtube_video_id")})

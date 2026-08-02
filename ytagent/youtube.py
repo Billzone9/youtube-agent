@@ -1,6 +1,23 @@
-"""Real YouTube upload. YouTubePublisher implements the Publisher protocol; the orchestrator
-never imports googleapiclient. Credentials are built from a stored refresh token (no interactive
-consent at runtime — that happens once via ytagent/youtube_auth.py). Uploads are LOCKED to private.
+"""Real YouTube client. YouTubePublisher implements the Publisher protocol; the orchestrator never
+imports googleapiclient. Credentials are built from a stored refresh token (one-time consent via
+ytagent/youtube_auth.py).
+
+Two write capabilities, both CHANNEL-VERIFIED and guard-scanned:
+  * publish(video, channel)        — videos.INSERT, LOCKED to private (a new upload).
+  * update_public(video, channel)  — videos.UPDATE to PUBLIC with a clean snippet (the gated publish
+                                     of a video WE already uploaded). This is the ONLY path that may
+                                     set a non-private privacyStatus.
+
+Channel safety (item 1 + Amendment A): videos.insert has no channelId parameter — an upload lands on
+whatever channel the token is bound to. So `_expected_channel_id(channel)` (the stored
+youtube_channel_id) is asserted two ways: a best-effort PRE-FLIGHT (channels.list mine=true, readable
+only under force-ssl) and — the backstop that matters most because insert is IRREVERSIBLE — a
+POST-assert that the response's snippet.channelId equals the expected id. A mismatch raises
+ChannelMismatchError carrying the stray video id so the caller records it MISPLACED and alerts.
+
+Scope note: videos.update needs youtube.force-ssl (there is NO 'own-uploads-only' scope — see BACKLOG).
+The restriction to "set metadata + publish only videos we uploaded" is enforced HERE (own-DB-ids only,
+channel assertion, no delete/list/playlist/comment/branding code) + the Telegram gate, NOT by the scope.
 """
 from __future__ import annotations
 
@@ -16,17 +33,17 @@ from googleapiclient.http import MediaFileUpload
 
 from .config import Settings
 from .metadata.guard import assert_no_internal_artifacts
-from .publish import PRIVACY_LOCKED, PublishResult, build_youtube_body, validate_media
+from .publish import (PRIVACY_LOCKED, PRIVACY_PUBLIC, ChannelMismatchError, PublishResult,
+                      build_public_update_body, build_youtube_body, validate_media)
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 _TOKEN_URI = "https://oauth2.googleapis.com/token"
 _CHUNK = 8 * 1024 * 1024   # 8 MiB (multiple of 256 KiB) — resumable resilience + progress
 _SOCKET_TIMEOUT = 120      # seconds; bounds a stalled connection in the worker thread
 
 
 def _refresh_token_for(channel: dict, settings: Settings) -> str | None:
-    """Per-channel token first (env var by slug), else the global one — secrets stay in .env,
-    never in the DB."""
+    """Per-channel token first (env var by slug), else the global one — secrets stay in .env."""
     slug = (channel.get("slug") or "").upper()
     if slug:
         per = os.environ.get(f"YOUTUBE_REFRESH_TOKEN_{slug}")
@@ -49,19 +66,55 @@ def get_credentials(channel: dict, settings: Settings) -> Credentials | None:
     )
 
 
+def _expected_channel_id(channel: dict) -> str | None:
+    return ((channel.get("config") or {}).get("youtube_channel_id")) or None
+
+
+def _client(creds: Credentials):
+    socket.setdefaulttimeout(_SOCKET_TIMEOUT)
+    return build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+
+def _actual_channel_id(youtube) -> str | None:
+    """The channel the token is bound to (channels.list mine=true). Returns None if the scope can't read
+    it (e.g. the legacy upload-only token 403s) — then only the POST-assert can verify."""
+    try:
+        resp = youtube.channels().list(part="id", mine=True).execute()
+        items = resp.get("items", [])
+        return items[0]["id"] if items else None
+    except HttpError:
+        return None
+
+
+def _preflight_channel(youtube, expected: str) -> None:
+    """Best-effort PRE-flight: if the channel is readable and DEFINITELY wrong, refuse before any write.
+    Unreadable (upload-only scope) → no-op; the post-assert is the real guard."""
+    actual = _actual_channel_id(youtube)
+    if actual is not None and actual != expected:
+        raise ChannelMismatchError(youtube_video_id=None, actual=actual, expected=expected)
+
+
+def _resource_channel_id(resource: dict) -> str | None:
+    return ((resource.get("snippet") or {}).get("channelId")) or None
+
+
 class YouTubePublisher:
     mode = "live"
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    # --- INSERT (new upload, LOCKED private) -------------------------------------------------------
     async def publish(self, video: dict, channel: dict) -> PublishResult:
         validation = validate_media(video)
         if not validation["size_matches"]:
             raise RuntimeError(
                 f"media validation failed (size {validation['size_bytes_actual']} != "
-                f"{validation['size_bytes_expected']}) — refusing to upload"
-            )
+                f"{validation['size_bytes_expected']}) — refusing to upload")
+        expected = _expected_channel_id(channel)
+        if not expected:
+            raise RuntimeError(
+                "channel has no youtube_channel_id configured — refusing to upload (cannot verify target)")
         creds = get_credentials(channel, self.settings)
         if creds is None:
             raise RuntimeError("no YouTube credentials (run `python -m ytagent.youtube_auth`)")
@@ -69,29 +122,26 @@ class YouTubePublisher:
         body = build_youtube_body(video, channel)
         if body["status"]["privacyStatus"] != PRIVACY_LOCKED:  # belt-and-braces private lock
             raise RuntimeError("privacyStatus not locked to private — refusing to upload")
-        # belt-and-braces artifact lock at the live boundary — re-scan the exact snippet we're about
-        # to send, so no other path can slip an internal artifact past the build-time guard.
         snip = body["snippet"]
         assert_no_internal_artifacts(snip["title"], snip["description"], *snip.get("tags", []))
 
-        resource = await asyncio.to_thread(self._upload, creds, body, video["file_path"])
+        youtube = _client(creds)
+        _preflight_channel(youtube, expected)                  # cheap pre-check when readable
+        resource = await asyncio.to_thread(self._upload, youtube, body, video["file_path"])
+
+        # BACKSTOP (Amendment A) — insert is irreversible; verify where it actually landed.
+        actual = _resource_channel_id(resource)
+        if actual != expected:
+            raise ChannelMismatchError(youtube_video_id=resource.get("id"), actual=actual, expected=expected)
 
         return PublishResult(
-            mode="live",
-            privacy_status=PRIVACY_LOCKED,
-            job_status="published",
-            video_status="published",
-            youtube_video_id=resource.get("id"),
-            published_at=datetime.now(timezone.utc),
-            body=body,
-            validation=validation,
-            raw={"youtube_resource": resource},
-        )
+            mode="live", privacy_status=PRIVACY_LOCKED, job_status="published",
+            video_status="published", youtube_video_id=resource.get("id"),
+            published_at=datetime.now(timezone.utc), body=body, validation=validation,
+            raw={"youtube_resource": resource})
 
-    def _upload(self, creds: Credentials, body: dict, path: str) -> dict:
+    def _upload(self, youtube, body: dict, path: str) -> dict:
         """Synchronous resumable upload — runs in a worker thread via asyncio.to_thread."""
-        socket.setdefaulttimeout(_SOCKET_TIMEOUT)
-        youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
         media = MediaFileUpload(path, mimetype="video/mp4", resumable=True, chunksize=_CHUNK)
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
         try:
@@ -103,14 +153,61 @@ class YouTubePublisher:
             print(f"[youtube] uploaded id={response.get('id')} (private)")
             return response
         except HttpError as e:
-            reason = ""
-            try:
-                reason = e.error_details[0].get("reason", "") if e.error_details else ""
-            except Exception:  # noqa: BLE001
-                pass
-            if e.resp.status == 403 and reason in ("quotaExceeded", "dailyLimitExceeded"):
-                raise RuntimeError(
-                    "YouTube API quota exhausted (one upload ~1600 of 10,000 units/day) — "
-                    "retry tomorrow"
-                ) from e
-            raise RuntimeError(f"YouTube upload failed (HTTP {e.resp.status} {reason})") from e
+            raise _http_error("upload", e) from e
+
+    # --- UPDATE to PUBLIC (gated publish of a video WE uploaded) ------------------------------------
+    async def update_public(self, video: dict, channel: dict) -> PublishResult:
+        yt_id = video.get("youtube_video_id")
+        if not yt_id:
+            raise RuntimeError("update_public called on a video with no youtube_video_id (not ours/uploaded)")
+        expected = _expected_channel_id(channel)
+        if not expected:
+            raise RuntimeError("channel has no youtube_channel_id configured — refusing to update")
+        creds = get_credentials(channel, self.settings)
+        if creds is None:
+            raise RuntimeError("no YouTube credentials (run `python -m ytagent.youtube_auth`)")
+
+        body = build_public_update_body(video, channel)        # clean snippet + privacyStatus=public
+        snip = body["snippet"]
+        assert_no_internal_artifacts(snip["title"], snip["description"], *snip.get("tags", []))
+
+        resource = await asyncio.to_thread(
+            self._update, creds, yt_id, body, expected, {yt_id})   # own-id set = this video only
+        return PublishResult(
+            mode="live", privacy_status=PRIVACY_PUBLIC, job_status="published",
+            video_status="published", youtube_video_id=yt_id,
+            published_at=datetime.now(timezone.utc), body=body, validation={},
+            raw={"youtube_resource": resource})
+
+    def _update(self, creds: Credentials, yt_id: str, body: dict, expected: str, our_ids: set) -> dict:
+        """The ONLY videos.update call site. Refuses any id we did not upload; verifies the channel both
+        before (pre-flight) and after (backstop) the write."""
+        if yt_id not in our_ids:
+            raise RuntimeError(f"refusing to update {yt_id}: not in our own-upload set {our_ids}")
+        youtube = _client(creds)
+        _preflight_channel(youtube, expected)                  # readable under force-ssl
+        update_body = {"id": yt_id, **body}
+        try:
+            resource = youtube.videos().update(part="snippet,status", body=update_body).execute()
+        except HttpError as e:
+            raise _http_error("update", e) from e
+        actual = _resource_channel_id(resource)
+        if actual is not None and actual != expected:          # backstop
+            raise ChannelMismatchError(youtube_video_id=yt_id, actual=actual, expected=expected)
+        print(f"[youtube] updated id={yt_id} -> {body['status'].get('privacyStatus')}")
+        return resource
+
+
+def _http_error(op: str, e: HttpError) -> RuntimeError:
+    reason = ""
+    try:
+        reason = e.error_details[0].get("reason", "") if e.error_details else ""
+    except Exception:  # noqa: BLE001
+        pass
+    if e.resp.status == 403 and reason in ("quotaExceeded", "dailyLimitExceeded"):
+        return RuntimeError("YouTube API quota exhausted — retry tomorrow")
+    if e.resp.status in (401, 403) and reason in ("insufficientPermissions", "forbidden", ""):
+        return RuntimeError(
+            f"YouTube {op} forbidden (HTTP {e.resp.status} {reason}) — the token may lack the "
+            "youtube.force-ssl scope; re-run `python -m ytagent.youtube_auth`")
+    return RuntimeError(f"YouTube {op} failed (HTTP {e.resp.status} {reason})")
