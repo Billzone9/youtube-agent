@@ -493,6 +493,10 @@ async def run_production(conn, notifier, *, job, channel, providers, tts, music,
     (4→5 gate) or _CrashInjected propagates WITHOUT marking the job failed — the state is preserved for a
     later resume; any other error marks the job failed (assets preserved for a Banks-fixed resume)."""
     state = _load_state(job)
+    # RESUME ROBUSTNESS: a restart may have lost the working dirs (or a caller seeded state directly);
+    # ensure they exist on EVERY entry, not only at first-run _initial_state.
+    os.makedirs(state["workdir"], exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(state["dst"])), exist_ok=True)
     done = state.get("stage") or ""
     pricing = await repo.ledger.get_llm_pricing(conn)
     try:

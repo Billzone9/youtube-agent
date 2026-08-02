@@ -43,6 +43,16 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## Probe vs film-wide yield disagree (found in the 6b real run, 2026-08-02 — log, do not chase)
+- `[ ]` **The feasibility probe over-estimated giraffe.** `probe_feasibility('giraffe')` returned
+  MARGINAL with E=17 and 9/10 both-match on its sample, but the full `source_film` run found only **5
+  clear clips across 935 candidates** (2 gate-rejected) — a ~0.5% film-wide yield, far below the probe's
+  90% sample. The refactored pipeline failed loud correctly (before any TTS spend), so no harm — but the
+  probe's small-sample yield is not predictive of the deep film-wide yield. When the scheduler (6c) uses
+  the probe to gate commissioning, treat MARGINAL as "verify with a fuller probe" — or align the probe's
+  query construction (must_terms/wild strictness) with `source_film`'s, since they currently disagree.
+  Cheetah similarly probed INCONCLUSIVE-SHALLOW (E=1). Elephant/lion have genuinely deep coverage.
+
 ## SECURITY — the YouTube token permits FAR more than the agent uses (publish slice, 2026-08-02)
 - `[ ]` **`youtube.force-ssl` is broad; the restriction is our CODE SURFACE + the Telegram gate, NOT the
   scope.** There is NO "only videos this app uploaded" OAuth scope — force-ssl (needed for videos.update
