@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from ..providers.base import LLMRequest, ModelTier
 from .style import STYLE_SPEC_VERSION, bare_title, compose_style
+from .sourceability import scan_briefs
 from .tells import TELLS_THRESHOLDS_VERSION, scan_tells
 
 _MAX_RETRIES = 2
@@ -173,13 +174,40 @@ def _repair_json(blob: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", "".join(out))   # drop trailing commas
 
 
-def _rules(runtime_s: int, words: int, n_beats: int) -> str:
+def _distribution_brief(dist: dict) -> str:
+    """Render the probe's OBSERVED footage distribution into the prompt — the raw material every
+    shot-brief must be written to fit (the doctrine that made The Old Paths source 52 clips)."""
+    axes = [("habitat", "habitat"), ("season", "season"),
+            ("time_of_day", "time of day"), ("shot_type", "shot types")]
+    lines = []
+    for key, label in axes:
+        d = dist.get(key) or {}
+        if not d:
+            continue
+        ranked = ", ".join(k for k, _ in sorted(d.items(), key=lambda kv: -kv[1]))
+        lines.append(f"  - {label}: {ranked}")
+    if not lines:
+        return ""
+    return ("OBSERVED FOOTAGE DISTRIBUTION — the footage that ACTUALLY EXISTS in stock libraries for "
+            "this subject. Write EVERY shot-brief to fit THIS: favour the settings listed first, call "
+            "for a later/rarer one only sparingly, and NEVER brief a setting the list does not contain.\n"
+            + "\n".join(lines) + "\n")
+
+
+def _rules(runtime_s: int, words: int, n_beats: int, distribution: str) -> str:
     return f"""\
 TASK: write a short FOOTAGE-LED documentary narration script for one video, in the channel voice.
-- Structure as BEATS. Each beat has: a short LABEL; a SHOT-BRIEF describing the visuals to source for
-  it (desired shots — footage is not yet sourced, so brief the shots, don't assume specific clips);
-  VO (the narration — sparing stage directions like *(beat)* for pauses are allowed); approx_seconds.
-- Footage-led: write the VO to what each shot would show; keep beats fittable to real clips.
+{distribution}- Structure as BEATS. Each beat has: a short LABEL; a SHOT-BRIEF describing the visuals to
+  source for it (desired shots — footage is not yet sourced, so brief the shots, don't assume specific
+  clips); VO (narration — sparing stage directions like *(beat)* for pauses are allowed); approx_seconds.
+- FOOTAGE-LED (hard rule): write each SHOT-BRIEF to the OBSERVED DISTRIBUTION above — the common,
+  broadly-available scenes (a herd moving across its habitat, in the dominant season and light), NOT
+  rare specifics stock libraries lack (extreme close-ups of an eye, a specific behaviour like
+  communication, a particular body part in action). Write the VO to what each shot would show.
+- SOURCEABLE FOOTAGE ONLY: every shot-brief must be fillable from stock WILDLIFE footage. NEVER ask for
+  archival or historical footage, old photographs, black-and-white/vintage film, illustrations, maps,
+  graphics, CGI/animation, reenactments, or museum/newspaper material — none exists in stock wildlife
+  libraries and the beat will fail to source at any yield. Brief only live wildlife/nature footage.
 - Fact underneath, poetry on top: every claim accurate; list facts_used with established=true/false so
   uncertain claims are flagged for approval — never fabricate a fact or invent a statistic.
 - PACE IS PART OF THE VOICE — calm and unhurried, ~{_WPM_TARGET} words per minute of narration, never
@@ -207,10 +235,21 @@ class ScriptWriter:
         self._p = provider
         self._exemplar = exemplar_text
 
-    def write(self, *, topic: str, channel: dict, research, runtime_target_s: int = 150,
-              n_beats: int = 4, footage=None) -> Script:
+    def write(self, *, topic: str, channel: dict, research, footage_distribution: dict,
+              runtime_target_s: int = 150, n_beats: int = 4, footage=None) -> Script:
         if footage is not None:
             raise NotImplementedError("footage-bound scripting arrives with Slice 4; use footage=None")
+        # STRUCTURAL footage-led enforcement (6b-bis): a script CANNOT be written for a subject without
+        # an observed footage distribution. `footage_distribution` is REQUIRED (no default → a call
+        # without it fails loud) and must be non-empty — so the auto path physically cannot regress to
+        # script-first, and no prompt tweak can undo it. Use the probe's DISTRIBUTION (reliable), never
+        # its headline verdict (which over-estimated giraffe).
+        if not isinstance(footage_distribution, dict) or not any(
+                footage_distribution.get(k) for k in ("season", "habitat", "time_of_day", "shot_type")):
+            raise ValueError(
+                "footage-led scripting requires a NON-EMPTY observed footage distribution "
+                "(season/habitat/time_of_day/shot_type from probe_feasibility) — a script must be "
+                "written TO the footage that exists, never subject-first. No footage observed → no script.")
         # build the voice brief without importing metadata.writer at module load (avoid cycles)
         from ..metadata.writer import build_voice_brief
 
@@ -225,13 +264,15 @@ class ScriptWriter:
             if not available else f"Research signals (web/trend): {getattr(research, 'notes', '')}"
         )
         user = f"VIDEO SUBJECT: {topic}\n{research_line}"
+        distribution = _distribution_brief(footage_distribution)
 
-        # Regenerate on an AI-tell flag, a per-beat pacing overrun, OR an overall-runtime overrun —
-        # all break the calm register; same bounded-retry pattern for each.
-        data, tell_report, pacing, runtime_bad, thin = None, None, [], None, []
+        # Regenerate on an AI-tell flag, a pacing overrun, a runtime overrun, OR an UNSOURCEABLE brief
+        # (archival/photo/etc.) — all break the standard; same bounded-retry pattern for each.
+        data, tell_report, pacing, runtime_bad, thin, unsourceable = None, None, [], None, [], []
         for _ in range(_MAX_RETRIES + 1):
             resp = self._p.complete(LLMRequest(
-                tier=ModelTier.QUALITY, system=style.system_prefix(_rules(runtime_target_s, words, n_beats)),
+                tier=ModelTier.QUALITY,
+                system=style.system_prefix(_rules(runtime_target_s, words, n_beats, distribution)),
                 messages=({"role": "user", "content": user},), max_tokens=6000, purpose="script",
                 channel_id=channel.get("id"),   # headroom: a dense 7-beat script + briefs + facts as JSON
             ))
@@ -249,9 +290,15 @@ class ScriptWriter:
             pacing = _pacing_violations(beats_raw)
             thin = _underwritten(beats_raw)
             runtime_bad = _runtime_violation(beats_raw, runtime_target_s)
-            if not tell_report.flagged and not pacing and not thin and not runtime_bad:
+            unsourceable = scan_briefs(beats_raw)
+            if not tell_report.flagged and not pacing and not thin and not runtime_bad and not unsourceable:
                 break
             problems = []
+            if unsourceable:
+                problems.append(
+                    "UNSOURCEABLE shot-briefs (rewrite to LIVE stock wildlife footage only — no archival/"
+                    "historical/photos/illustrations/maps/CGI/reenactment/museum material) — " + "; ".join(
+                        f"beat {i + 1}: {', '.join(flags)}" for i, flags in unsourceable))
             if tell_report.flagged:
                 problems.append("AI tells — " + "; ".join(tell_report.reasons))
             if pacing:
@@ -292,7 +339,8 @@ class ScriptWriter:
             "tells_thresholds_version": TELLS_THRESHOLDS_VERSION,
             "tells_flagged": tell_report.flagged if tell_report else None,
             "wpm_target": _WPM_TARGET, "wpm_max": _WPM_MAX, "pacing_ok": not pacing,
-            "runtime_ok": not runtime_bad,
+            "runtime_ok": not runtime_bad, "sourceable_ok": not unsourceable,
+            "footage_led": True, "footage_distribution": footage_distribution,
             "research_available": bool(available),
         }
         return Script(

@@ -43,6 +43,14 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## RESOLVED (6b-bis) — auto-scripts now footage-led; the block on 6c is cleared
+- `[x]` **Fixed 2026-08-02.** ScriptWriter.write() now REQUIRES a probe-observed footage distribution
+  (structural — no default, fails loud) and an unsourceable-content scanner (`authoring/sourceability.py`)
+  regenerates archival/photo/illustration/CGI briefs in the bounded-retry loop. `_st_script` probes →
+  distribution → writes, so the auto path cannot regress to script-first. PROOF (same failed subject,
+  sourcing-only): **8 clear → 54 clear (PASS, all 7 beats)** — see `DIAGNOSTIC_SOURCING_YIELD.md`. 6c is
+  unblocked. (Original analysis retained below for the record.)
+
 ## BLOCKS 6c — auto-scripts source poorly because briefs are written script-first, not footage-led
 - `[ ]` **Root cause found (see `DIAGNOSTIC_SOURCING_YIELD.md`).** Same subject `african elephant`
   yielded 52 clear clips when its script was written to a probe's OBSERVED distribution (The Old Paths)

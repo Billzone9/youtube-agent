@@ -402,12 +402,31 @@ def _before(done: str, stage: str) -> bool:
     return _STAGES.index(stage) > d
 
 
-async def _st_script(conn, state, *, script_writer, channel, usage_sink, pricing):
+async def _st_script(conn, state, *, script_writer, channel, usage_sink, pricing, providers, llm):
     if state.get("script_path") and os.path.exists(state["script_path"]):
         return _load_script_json(state["script_path"])   # resume: reload, no LLM re-spend
     cfg = state["cfg"]
+    # FOOTAGE-LED (6b-bis, STRUCTURAL): obtain the OBSERVED footage distribution BEFORE scripting —
+    # the ScriptWriter REQUIRES it, so the auto path physically cannot regress to script-first. Use a
+    # pre-supplied distribution (e.g. from the scheduler's probe) if present; else probe now.
+    dist = state.get("footage_distribution")
+    if not dist:
+        from .sourcing.feasibility import probe_feasibility
+        rep = await probe_feasibility(conn, providers, state["topic"], llm=llm,
+                                      channel_id=state["channel_id"],
+                                      runtime_s=cfg.get("runtime_target_s", 150),
+                                      n_beats=cfg.get("n_beats", 4))
+        dist = {"season": rep.season_dist, "habitat": rep.habitat_dist,
+                "time_of_day": rep.time_dist, "shot_type": rep.shot_dist}
+        state["footage_distribution"] = dist
+        await record_event(conn, "probed",
+                           message=f"footage distribution for '{state['topic']}' — "
+                                   f"habitat {list((rep.habitat_dist or {}).keys())} "
+                                   f"(verdict {rep.verdict}, E={rep.pool_depth})",
+                           channel_id=state["channel_id"], job_id=state["job_id"],
+                           data={"distribution": dist, "verdict": rep.verdict})
     script = script_writer.write(topic=state["topic"], channel=channel, research=UnavailableResearch(),
-                                 runtime_target_s=cfg.get("runtime_target_s", 150),
+                                 footage_distribution=dist, runtime_target_s=cfg.get("runtime_target_s", 150),
                                  n_beats=cfg.get("n_beats", 4))
     await _drain_llm(conn, usage_sink, pricing, channel_id=state["channel_id"], job_id=state["job_id"])
     path = os.path.join(state["root"], "script.json")
@@ -501,7 +520,8 @@ async def run_production(conn, notifier, *, job, channel, providers, tts, music,
     pricing = await repo.ledger.get_llm_pricing(conn)
     try:
         script = await _st_script(conn, state, script_writer=script_writer, channel=channel,
-                                  usage_sink=usage_sink, pricing=pricing)
+                                  usage_sink=usage_sink, pricing=pricing, providers=providers,
+                                  llm=llm_provider)
         if _before(done, "scripted"):
             await _maybe_checkpoint(conn, state, "scripted", crash_after)
 

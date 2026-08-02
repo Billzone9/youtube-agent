@@ -1,5 +1,12 @@
 # Diagnostic — why the SAME subject yielded 52 clear clips one day and 8 the next
 
+> **RESOLVED (2026-08-02, slice 6b-bis).** Footage-led auto-scripting was wired in structurally
+> (ScriptWriter now REQUIRES a probe-observed distribution; unsourceable content is scanned + regenerated
+> in the bounded-retry loop). Re-running the SAME failed subject through the fixed path took it from
+> **8 clear (FAILED) → 54 clear (PASS, all 7 beats)** — beating even the hand-written Old Paths (52).
+> Proof: `scripts/prove_footage_led.py` (sourcing-only, no spend). Table at the bottom of this file.
+
+
 Two `african elephant` productions, one week apart, same libraries, same gate, wildly different yield:
 
 | run | job | date | pool candidates | eligible | clear | allocated | outcome |
@@ -123,3 +130,24 @@ automatic, and it is a prerequisite input to 6c's design, not an optional polish
 **Also worth noting for the probe itself (already in BACKLOG):** the probe's small-sample yield
 (giraffe MARGINAL/9-of-10) over-estimated the deep film-wide yield (5 clear/935). So (1) needs the
 probe's *distribution* output (which was reliable), not its *headline verdict* (which was optimistic).
+
+---
+
+## PROOF (slice 6b-bis) — options 1 + 2 built structurally, re-run on the failed subject
+
+Structural change: `ScriptWriter.write(footage_distribution=…)` is now a REQUIRED argument (no default →
+a call without it fails loud) fed the probe's observed distribution; `authoring/sourceability.py`
+flags archival/historical/photo/illustration/map/CGI/reenactment briefs and regenerates them in the same
+bounded-retry loop as the AI-tell scanner. `_st_script` probes → distribution → writes, so the auto path
+physically cannot regress to script-first. Same subject `african elephant`, sourcing-only, no spend:
+
+| run | pool | eligible | clear | allocated | outcome |
+|-----|------|----------|-------|-----------|---------|
+| The Old Paths (probe-led, hand) | 1731 | 157 | 52 | 26 | full film |
+| African Elephant (script-first) | 871 | 18 | **8** | 9 | **FAILED** |
+| **FOOTAGE-LED (auto, fixed)** | 1702 | 85 | **54** | 21 | **PASS — all 7 beats 3/2** |
+
+Observed distribution used: habitat savanna/grassland (dominant); time golden/dawn/dusk (dominant);
+shots wide (dominant). New briefs came out broad ("a herd moving across savanna at golden hour"); new
+queries broad ("elephant herd dry savanna", "elephant savanna golden hour", "elephant family moving
+savanna"); the archival ivory-trade beat is gone. **The fix is sufficient — verified before 6c.**

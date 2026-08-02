@@ -127,8 +127,12 @@ async def run() -> None:
         print("Judge against the lion script's voice: poetic surface, accurate underneath, no AI tells.")
         print("=" * 88)
         sw = ScriptWriter(provider, exemplar_text=script_exemplar)
+        # footage-led (6b-bis): ScriptWriter now REQUIRES an observed footage distribution. This legacy
+        # Slice-5 proof predates the probe; pass a representative penguin distribution so it still runs.
+        _dist = {"habitat": {"ice/snow": 8, "coast/beach": 4}, "season": {"snow/winter": 9},
+                 "time_of_day": {"day": 7}, "shot_type": {"wide": 6, "medium": 4}}
         script = sw.write(topic=_PENGUIN_TOPIC, channel=channel, research=UnavailableResearch(),
-                          runtime_target_s=150, n_beats=4)
+                          footage_distribution=_dist, runtime_target_s=150, n_beats=4)
         run_b = await _drain_costs(conn, sink, pricing)
 
         print(f"\nTITLE: {script.title}")
