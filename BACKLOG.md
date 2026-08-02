@@ -43,6 +43,25 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## BLOCKS unattended 6c — the commissioning VERDICT-GATE is unreliable (found in the supervised run)
+- `[ ]` **The probe VERDICT is a poor commissioning gate; use the DISTRIBUTION, let sourcing be the gate.**
+  The first supervised `tick()` (2026-08-02) exposed this on REAL probe data: of 7 subjects probed for the
+  wildlife channel, only the elephant was FEASIBLE. **lion → INFEASIBLE (E=34, a DEEP pool)**, giraffe /
+  zebra / wildebeest → INCONCLUSIVE-SHALLOW, penguin → INFEASIBLE, and **flamingo flipped MARGINAL →
+  INFEASIBLE across two probes 15 min apart** (small-sample noise). With the verdict as the gate the
+  scheduler `paused_pool` every time — it would not commission almost anything, i.e. not autonomous.
+  The routing/classification is CORRECT (every subject was skipped per its verdict, no ask, paused +
+  alerted) — the problem is the GATE, not the runner. Root cause is the diagnostic's known point: the
+  probe's 10-sample yield does not predict the film-wide footage-led yield (elephant: probe ambiguous,
+  yet 54 clear). **RECOMMENDED (design decision for Banks, NOT built):** stop gating commissioning on
+  the probe verdict — keep the probe for the observed DISTRIBUTION (which drives footage-led scripting,
+  and is reliable) and let `source_film`'s real yield be the feasibility gate: proceed to production,
+  and if sourcing comes up short the runner ALREADY routes `ProductionError` → next subject (no spend
+  lost — it fails before TTS). Early-stop + the verdict cache make a real source attempt cheaper. Until
+  this is decided, the scheduler must not run unattended (it would just churn probes and pause).
+- `[ ]` **Per-stage production timings still unmeasured** — no production ran (everything failed the
+  gate), so probe/script/source/TTS/design/assemble wall-clock is still pending a subject that commissions.
+
 ## RESOLVED (6b-bis) — auto-scripts now footage-led; the block on 6c is cleared
 - `[x]` **Fixed 2026-08-02.** ScriptWriter.write() now REQUIRES a probe-observed footage distribution
   (structural — no default, fails loud) and an unsourceable-content scanner (`authoring/sourceability.py`)
