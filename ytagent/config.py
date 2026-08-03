@@ -55,7 +55,7 @@ class Settings:
     # The ElevenLabs key's HARD credit cap (structural spend control). ElevenLabs does NOT expose a
     # key's cap via any GET, so we mirror it here to PRE-CHECK the spend gate against remaining credits;
     # keep it in sync with the dashboard cap. When Banks raises the dashboard cap he raises this too.
-    elevenlabs_key_credit_cap: int | None = 15000
+    elevenlabs_key_credit_cap: int | None = 20000   # matches the live dashboard cap (also set via .env)
     # The RECURRING monthly credit allowance (an inference — see _STARTER_RECURRING_ALLOWANCE_CR). Used
     # to compute SUSTAINABLE cadence; distinct from the live character_limit (which includes rollover).
     elevenlabs_recurring_allowance_cr: int = _STARTER_RECURRING_ALLOWANCE_CR
@@ -106,7 +106,7 @@ def load_settings() -> Settings:
         pixabay_api_key=os.environ.get("PIXABAY_API_KEY"),
         elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY"),
         elevenlabs_key_credit_cap=(int(os.environ["ELEVENLABS_KEY_CREDIT_CAP"])
-                                   if os.environ.get("ELEVENLABS_KEY_CREDIT_CAP") else 15000),
+                                   if os.environ.get("ELEVENLABS_KEY_CREDIT_CAP") else 20000),
         elevenlabs_recurring_allowance_cr=int(os.environ.get(
             "ELEVENLABS_RECURRING_ALLOWANCE_CR", _STARTER_RECURRING_ALLOWANCE_CR)),
     )

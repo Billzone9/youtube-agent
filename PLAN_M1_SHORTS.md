@@ -52,7 +52,18 @@ own.** So:
   generated Shorts/wk (~9,900) = **~23,600/mo → fits with room.** So A′ within £5/mo means EITHER
   reused-bed Shorts at weekly long-form, OR generated-bed variety at a lower long-form cadence — not
   both at full tilt. Anything past that is the tier-B decision (unverified ~£15–20/mo, recorded in
-  `PLAN_MARKETING_ARC.md`). The M1 default: **reused-bed Shorts + ~1 long-form/wk**, which fits.
+  `PLAN_MARKETING_ARC.md`).
+
+### MIX DECISION (2026-08-04) — discovery-weighted, NOT weekly long-form
+**Landed mix: fortnightly long-form (~2/mo, ~13,700) + ~4 Shorts/wk → ~23,600/mo, ~6,400 headroom (21%).**
+Rejected the weekly-long-form default (~29,660/mo, ~340 headroom / 1%). Reasoning: (1) A′ chose Shorts as
+the discovery lever, so credits belong behind that bottleneck — not 99% on long-form, which is weak at
+cold reach; (2) the watch-hour case for weekly long-form is circular — hours need views need discovery,
+so at 0 subs more long-form banks inventory nobody sees; (3) the ~6,400 headroom funds bed variation
+(anti-templating) + absorbs a retake/re-run, where ~340 breaks on one. The bed-library-once trick could
+keep weekly long-form with free varied Shorts, but it doesn't justify spending 99% of the allowance on
+the weak-reach channel before discovery is proven — so it's declined. **Long-form scales back UP once
+discovery is proven (the success criterion) and/or tier B.** The M1 build targets this mix.
 
 ## The build (file level)
 

@@ -88,10 +88,14 @@ def _length(spec, beat, narration_s: dict | None) -> float:
     raise VisualDensityError(f"beat {beat.name!r}: no narration or declared duration to measure against")
 
 
-def assert_visual_density(spec, narration_s: dict | None = None, *, motif_srcs: set | None = None) -> dict:
+def assert_visual_density(spec, narration_s: dict | None = None, *, motif_srcs: set | None = None,
+                          short: bool = False) -> dict:
     """Raise VisualDensityError unless every clips-beat meets the standard. Returns a per-beat report
     on success. `narration_s`: optional {beat.name → seconds} (else measured from each beat.narration).
-    `motif_srcs`: clip srcs explicitly allowed to recur (a deliberate motif); default none."""
+    `motif_srcs`: clip srcs explicitly allowed to recur (a deliberate motif); default none.
+    `short`: a Shorts cut — a ≤60s vertical may HOLD one striking (internally-moving) shot, so the
+    long-form ⌈L/30⌉ floor is relaxed to 1. The no-reuse rule and the long-hold FLAG still apply, so a
+    static hold is surfaced for the review gate (a Short wants movement, same as the lion's long holds)."""
     if spec.source != "clips":
         return {"skipped": f"source={spec.source!r} (prebaked beats are pre-cut)"}
     motif = motif_srcs or set()
@@ -99,7 +103,7 @@ def assert_visual_density(spec, narration_s: dict | None = None, *, motif_srcs: 
     for beat in spec.beats:
         L = _length(spec, beat, narration_s)
         k = len(beat.clips)
-        need = min_clips(L)
+        need = 1 if short else min_clips(L)
         if k < need:                                          # HARD floor — no clip carries a beat
             raise VisualDensityError(
                 f"beat {beat.name!r}: {L:.1f}s of narration needs ≥{need} distinct clips "

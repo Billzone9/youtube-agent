@@ -27,6 +27,7 @@ _OFFLINE = [
     ("verify_curation", False),
     ("verify_allowance", False),          # §1 allowance fix (pure)
     ("verify_subject_terms", False),      # subject-terms flag (pure)
+    ("verify_shorts", False),             # M1 Shorts density + bed library (pure/local)
     ("verify_slice1", True),
     ("verify_layer1", True),
     ("verify_scheduler", True),
