@@ -26,7 +26,7 @@ from ytagent.scheduler import Deps, tick
 from ytagent.sourcing import get_stock_providers
 from ytagent.tts import get_tts_provider
 
-_POOL = ["giraffe"]   # best non-elephant: FEASIBLE, 7/10 wild-ratio (mostly-wild footage)
+_POOL = ["african elephant"]   # option 1: the one deep+wild subject, for the per-stage timings
 _MIN_VERDICT = "MARGINAL"            # legacy field; the verdict no longer gates (E<5 floor is the only skip)
 _THRESHOLD = 50.0                    # generous: the spend gate must NOT fire on a normal ~£9 production
 _N_BEATS = 6

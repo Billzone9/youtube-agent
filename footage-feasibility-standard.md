@@ -1,8 +1,17 @@
 # Footage-feasibility standard — prove the footage BEFORE writing the script
 
-Companion to `visual-density-standard.md`, `house-voice-standard.md`, `vision-gate-standard.md`. This
-is the doctrine we violated on the wolf and are fixing here: **source footage first, write to fit it**
-(ROADMAP; spec §4.3/§71). A subject must pass a feasibility probe **before a word of script is written**.
+Companion to `visual-density-standard.md`, `house-voice-standard.md`, `vision-gate-standard.md`,
+`footage-coverage-standard.md`. This is the doctrine we violated on the wolf and are fixing here:
+**source footage first, write to fit it** (ROADMAP; spec §4.3/§71). A subject must pass a feasibility
+probe **before a word of script is written**.
+
+> **READ FIRST — a subject's feasibility is bounded by what the free libraries actually stock.** The
+> probe measures OUR pool, but the deeper constraint is structural: free stock libraries hold *wild*
+> footage for the African elephant and mostly *captive* (zoo/park) footage for most other charismatic
+> megafauna, while genuinely-wild herd animals are thinly stocked. A big pool is NOT evidence of a
+> makeable film — it can be a deep pool of zoo footage the wild-gate will reject. See
+> **`footage-coverage-standard.md`** for the three coverage classes and the evidence. Choose subjects
+> against that reality, and trust `source_film`'s real clear count over any probe estimate.
 
 ## Why (the wolf, the known-bad fixture)
 The wolf was SCRIPTED first — a northern-winter narration — and only then did we ask whether wild winter

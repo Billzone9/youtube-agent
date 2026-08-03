@@ -43,24 +43,15 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
-## DEFINITIVE: non-elephant megafauna are CAPTIVE-POLLUTED in stock; elephant is uniquely coverable
-- `[ ]` **The wildlife channel's viable subject pool is NARROW, and it is a footage-reality constraint,
-  not a code one (3 supervised attempts + vetting, 2026-08-03).** After the gate redesign let subjects
-  proceed to real sourcing, the pattern is conclusive: charismatic megafauna have TWO failure modes and
-  only the elephant escapes both. (1) CAPTIVE POLLUTION — lion sourced 10 clear (much of "lion" is sea
-  lions/statues/**captive** lions); giraffe's rejects were species=clear_match + **wild=clear_mismatch**
-  (correctly-identified giraffes in ZOOS) — the wild-gate rightly rejects them, tanking the clear-rate.
-  Disambiguation fixes homonyms (sea lion) but NOT captive pollution. (2) SHALLOW POOL — herd animals
-  (zebra E=8, wildebeest E=13) are ~100% wild (no captive zebra herds) but stock coverage is thin, so
-  even a perfect wild-ratio yields few clips. The **elephant is the sweet spot** — deep pool (E=157) AND
-  wild-dominated (safari footage) → 54 clear. **IMPLICATION for the playbook:** curate the pool to the
-  few subjects with BOTH deep + wild coverage (elephant proven; others need vetting to find), or accept
-  a coverage floor. `scripts/vet_pool.py` is the tool to discover them, but it is SLOW (sample-20 probes
-  ~8 min each) and one candidate can hang it (add per-probe timeouts before batch use). **No non-elephant
-  CARD achieved** — the per-stage production timings Banks asked for remain unmeasured; the cheapest way
-  to get them is a dry-run elephant (timings are subject-independent) OR a vetted deep+wild subject once
-  one is found. This is a DATA/curation problem now, not a scheduler bug — the scheduler behaved
-  correctly throughout (proceeded, recorded real yields, capped failures, paused + alerted).
+## Footage-coverage finding → PROMOTED to `footage-coverage-standard.md` (2026-08-03)
+The "non-elephant megafauna are captive-polluted; elephant uniquely coverable" finding is no longer a
+backlog item — it is a **standing structural constraint** on the whole channel, now written up in
+`footage-coverage-standard.md` (three coverage classes + evidence table) and referenced from
+`footage-feasibility-standard.md`. Only the still-actionable **code** residue stays here:
+- `[ ]` **`scripts/vet_pool.py` needs a per-probe timeout before batch use** — it is slow (~8 min/sample-20
+  probe) and one hanging candidate stalls the whole run (had to be killed near completion during vetting).
+- `[ ]` **Discover more class-1 (deep + wild) subjects** — elephant is the only proven one. Candidates to
+  vet: large-range wild fauna, birds in flight, marine life, aerial herds (see the doctrine in the standard).
 
 ## Contradiction detector false-fires on HOMONYM subject terms (log, do not chase — 2026-08-03)
 - `[ ]` **The lion run's 23 "contradictions" were the sea-lion ambiguity, NOT a gate regression.** 19 were
@@ -72,28 +63,12 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   standard.md) — "African lion" surfaces no sea lions, so the contradictions vanish. If ever chased: make
   `_indicates_subject` word-boundary + homonym aware ("sea lion" ≠ "lion"). Low priority given the term fix.
 
-## The real 6c constraint is FOOTAGE COVERAGE, not the gate (2nd supervised run, 2026-08-03)
-- `[ ]` **The gate redesign works; the blocker is that most non-elephant subjects are footage-poor, and
-  discovering it via sourcing is expensive (~40 min/subject).** With the verdict gate dropped, the
-  supervised run let **lion PROCEED past its INFEASIBLE verdict** (the old gate would have wrongly
-  rejected it) → real film-wide source → **10 clear** (pool 1338 → 78 eligible → 10 clear; 64 rejected,
-  23 contradictions — "lion" queries pull sea lions / mountain lions / captive) → SOURCING_SHORT,
-  recorded with the actual clear_count=10. This is the redesign VINDICATED: sourcing, not the noisy
-  10-clip verdict, is the gate, and it gave a real answer. BUT: (a) lion's source took ~40 min — a low
-  clear-rate subject grinds the full max_verify=90; early-stop only helps HIGH-yield subjects. (b) Of 7
-  probed subjects only the elephant (54 clear) is footage-rich; lion=10, giraffe shallow/noisy
-  (E flipped 13↔28), flamingo flipped MARGINAL↔INFEASIBLE. **So the scheduler is CORRECT + SAFE (it
-  proceeds, records real yields, caps consecutive sourcing failures at 3, then pauses + alerts — it will
-  NOT churn forever) but it can only PRODUCE for footage-rich subjects.** No card this run — the
-  available non-elephant subjects don't source enough; per-stage timings still pending a productive one.
-  **DECISIONS for Banks:** (1) curate the playbook pool to KNOWN footage-rich subjects (elephant is the
-  proven one; more need discovery); and/or (2) reintroduce a CHEAP coverage pre-check that actually
-  predicts film-wide yield (a mid-size ~30-40-clip probe as an ADVISORY to ORDER the pool
-  most-likely-first, NOT a hard gate — the 10-clip verdict was the wrong tool), so the scheduler tries
-  the best-covered subject first instead of paying ~40 min to discover a thin one; and/or (3) accept a
-  2nd elephant (dry-run card, not on channel) purely to capture the per-stage timings. Unattended running
-  is SAFE now (it pauses + asks), just unproductive on a footage-poor pool. giraffe job 256 was killed
-  mid-source; playbook DISABLED.
+## The real 6c constraint is FOOTAGE COVERAGE, not the gate → folded into the standard (2026-08-03)
+Superseded: the "gate redesign works; blocker is footage coverage" finding (lion PROCEEDED past its
+INFEASIBLE verdict → real source → 10 clear → SOURCING_SHORT, the redesign vindicated) is now captured in
+`footage-coverage-standard.md`. The scheduler is CORRECT + SAFE (proceeds, records real yields, caps
+consecutive sourcing failures at 3, then pauses + alerts). Advisory ordering (a mid-size probe to order
+the pool most-likely-first, never a gate) was BUILT — see `scripts/vet_pool.py` + `subject-terms-standard.md`.
 
 ## BLOCKS unattended 6c — the commissioning VERDICT-GATE is unreliable (found in the supervised run)
 - `[ ]` **The probe VERDICT is a poor commissioning gate; use the DISTRIBUTION, let sourcing be the gate.**
