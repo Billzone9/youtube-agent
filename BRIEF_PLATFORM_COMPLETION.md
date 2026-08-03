@@ -5,6 +5,14 @@
 **Date:** 3 August 2026
 **Repo state at time of writing:** `origin/main` = `7ed686b`; two local commits unpushed (`4fd9feb`, `c9992de`)
 
+> **CORRECTION (2026-08-04, post-evaluation) — do not read the two struck claims below as truth.**
+> The evaluation this brief requested disproved them; the reviewer accepted the corrections. (a) §3
+> row 8 "assembly currently 16:9 only" is WRONG — **9:16 is a first-class, proven axis** (`spec.py`
+> targets/`for_format`, per-format focal points, crop math, `prove_slice3`). (b) §3 "provider layer not
+> proven for voice/footage" is half-wrong — **footage IS swappable** (Pexels + Pixabay, dedup/rank
+> loop); TTS has the interface with one vendor (fine). See `PLAN_NOW_BUNDLE.md` and the evaluation for
+> specifics. Everything else in this brief stands.
+
 ---
 
 ## 0. HOW TO USE THIS BRIEF

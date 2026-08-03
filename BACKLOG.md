@@ -34,6 +34,19 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   native Shorts exist. **Revisit WITH Shorts, not separately** (same trigger). Assembly is already
   9:16-capable; the unbuilt part is Shorts scheduling/scripting/upload.
 
+## Marketing arc — carry-forward (small entries, fold into the arc plan; 2026-08-04)
+- `[ ]` **Plan cadence against ~4.4 films/month, NOT 2/week.** The ROI report shows sustainable cadence
+  ≈ 4.4/mo (~1/wk) on the recurring 30k allowance; the seed default is already `per_week: 1`. The live
+  wildlife playbook carried a stale `per_week: 2` (leftover from the elephant supervised runs) — reset
+  to `per_week: 1` on 2026-08-04 to match. The arc must design growth around ~1 film/week until a plan
+  change lifts the ceiling; rollover can fund a short burst, not the cadence.
+- `[ ]` **`scheduler/subject_terms.py:_AMBIGUOUS` is a hardcoded WILDLIFE word set in a channel-GENERAL
+  engine** — the same anti-pattern as the vision gate's hardcoded canid definitions that had to be fixed
+  before subject #2. It works for the wildlife channel but a second channel (e.g. financial news) gets
+  no coverage and possibly false flags. Before onboarding a 2nd channel: make the ambiguous-term set
+  per-channel config (channel registry / onboarding interview), or derive it, rather than a wildlife
+  literal in code. Logged now so it isn't a surprise on channel #2.
+
 ---
 
 ## Anthropic cost — Claude Max for scripts (log only, NOT a cost measure — 2026-08-04)
