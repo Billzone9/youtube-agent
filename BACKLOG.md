@@ -43,6 +43,25 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## DEFINITIVE: non-elephant megafauna are CAPTIVE-POLLUTED in stock; elephant is uniquely coverable
+- `[ ]` **The wildlife channel's viable subject pool is NARROW, and it is a footage-reality constraint,
+  not a code one (3 supervised attempts + vetting, 2026-08-03).** After the gate redesign let subjects
+  proceed to real sourcing, the pattern is conclusive: charismatic megafauna have TWO failure modes and
+  only the elephant escapes both. (1) CAPTIVE POLLUTION — lion sourced 10 clear (much of "lion" is sea
+  lions/statues/**captive** lions); giraffe's rejects were species=clear_match + **wild=clear_mismatch**
+  (correctly-identified giraffes in ZOOS) — the wild-gate rightly rejects them, tanking the clear-rate.
+  Disambiguation fixes homonyms (sea lion) but NOT captive pollution. (2) SHALLOW POOL — herd animals
+  (zebra E=8, wildebeest E=13) are ~100% wild (no captive zebra herds) but stock coverage is thin, so
+  even a perfect wild-ratio yields few clips. The **elephant is the sweet spot** — deep pool (E=157) AND
+  wild-dominated (safari footage) → 54 clear. **IMPLICATION for the playbook:** curate the pool to the
+  few subjects with BOTH deep + wild coverage (elephant proven; others need vetting to find), or accept
+  a coverage floor. `scripts/vet_pool.py` is the tool to discover them, but it is SLOW (sample-20 probes
+  ~8 min each) and one candidate can hang it (add per-probe timeouts before batch use). **No non-elephant
+  CARD achieved** — the per-stage production timings Banks asked for remain unmeasured; the cheapest way
+  to get them is a dry-run elephant (timings are subject-independent) OR a vetted deep+wild subject once
+  one is found. This is a DATA/curation problem now, not a scheduler bug — the scheduler behaved
+  correctly throughout (proceeded, recorded real yields, capped failures, paused + alerted).
+
 ## Contradiction detector false-fires on HOMONYM subject terms (log, do not chase — 2026-08-03)
 - `[ ]` **The lion run's 23 "contradictions" were the sea-lion ambiguity, NOT a gate regression.** 19 were
   pinnipeds ("sea lion", "seal", "walrus"), 3 were "lion (sculpture)"; ALL were correctly `clear_mismatch`
