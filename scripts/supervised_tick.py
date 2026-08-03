@@ -26,8 +26,8 @@ from ytagent.scheduler import Deps, tick
 from ytagent.sourcing import get_stock_providers
 from ytagent.tts import get_tts_provider
 
-_POOL = ["flamingo"]           # only non-elephant subject probing >= MARGINAL of those tried
-_MIN_VERDICT = "MARGINAL"            # accept MARGINAL — footage-led scripting sources it well regardless
+_POOL = ["lion", "giraffe", "flamingo"]   # all proceed under the new gate (E≥5); sourcing decides
+_MIN_VERDICT = "MARGINAL"            # legacy field; the verdict no longer gates (E<5 floor is the only skip)
 _THRESHOLD = 50.0                    # generous: the spend gate must NOT fire on a normal ~£9 production
 _N_BEATS = 6
 _RUNTIME = 340
@@ -58,6 +58,11 @@ async def run():
     conn = await psycopg.AsyncConnection.connect(settings.dsn(), row_factory=dict_row, autocommit=True)
     ch = await repo.channels.get_by_slug(conn, "wildlife")
 
+    # the prior supervised runs recorded these subjects 'infeasible' under the OLD verdict-gate (now
+    # removed); clear that stale history so the new sourcing-gate re-attempts them as novel.
+    await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s AND subject = ANY(%s)",
+                       [ch["id"], _POOL])
+
     # enable the wildlife playbook for this supervised run (idle + due now)
     await conn.execute(
         "UPDATE playbooks SET enabled=true, state='idle', next_run_at=NULL, subject_pool=%s, "
@@ -76,43 +81,49 @@ async def run():
     total = time.monotonic() - t0
 
     print(f"\ntick summary: {summary}")
-    job_id = summary["commissioned"][0][1] if summary["commissioned"] else (
-        summary["submitted"][0] if summary["submitted"] else None)
+    for subj, detail in summary.get("failed", []):
+        print(f"  sourcing outcome: '{subj}' — {detail}")
+    for subj, detail in summary.get("skipped_infeasible", []):
+        print(f"  skipped (pool-depth floor): '{subj}' — {detail}")
+
+    job_id = summary["submitted"][0] if summary["submitted"] else None
     if job_id is None:
-        print("no production commissioned — check the summary above (paused/skipped).")
+        print("\nNo card this run — see the sourcing outcomes above (real clear counts, not probe guesses).")
         if bot:
             await bot.shutdown()
         await conn.close()
         return
 
-    # per-stage wall-clock from the event timeline (probe runs in _commission, before produce_started)
+    # per-stage wall-clock for the SUBMITTED job (its own events); probe from the matching 'probed' event
     ev = {}
     for r in await (await conn.execute(
             "SELECT type, extract(epoch from created_at) AS t FROM events WHERE job_id=%s "
             "AND type IN ('produce_started','script_written','sourcing.film_pool','narrated',"
             "'audio_designed','produce_assembled','video_submitted') ORDER BY id", [job_id])).fetchall():
         ev.setdefault(r["type"], r["t"])
-    tick_start_epoch = time.time() - total
+    topic = await (await conn.execute("SELECT payload->>'topic' AS t FROM jobs WHERE id=%s", [job_id])).fetchone()
+    probed = await (await conn.execute(
+        "SELECT extract(epoch from created_at) AS t FROM events WHERE type='probed' "
+        "AND data->>'subject'=%s AND extract(epoch from created_at) <= %s ORDER BY id DESC LIMIT 1",
+        [topic["t"], ev.get("produce_started", 0)])).fetchone()
 
-    def dur(a_epoch, b_type):
-        return ev.get(b_type, 0) - a_epoch if ev.get(b_type) else None
+    def dur(a, b_type):
+        return ev.get(b_type, 0) - a if (ev.get(b_type) and a) else None
 
-    stages = []
-    if ev.get("produce_started"):
-        stages.append(("probe + select", ev["produce_started"] - tick_start_epoch))
-        stages.append(("script", dur(ev["produce_started"], "script_written")))
-        stages.append(("source", dur(ev.get("script_written", ev["produce_started"]), "sourcing.film_pool")))
-        stages.append(("TTS", dur(ev.get("sourcing.film_pool", 0), "narrated")))
-        stages.append(("design (music)", dur(ev.get("narrated", 0), "audio_designed")))
-        stages.append(("assemble (render)", dur(ev.get("audio_designed", 0), "produce_assembled")))
-        stages.append(("submit", dur(ev.get("produce_assembled", 0), "video_submitted")))
-
-    print(f"\n=== PER-STAGE WALL-CLOCK (job {job_id}) ===")
+    stages = [
+        ("probe", (ev["produce_started"] - probed["t"]) if (probed and ev.get("produce_started")) else None),
+        ("script", dur(ev.get("produce_started"), "script_written")),
+        ("source", dur(ev.get("script_written"), "sourcing.film_pool")),
+        ("TTS", dur(ev.get("sourcing.film_pool"), "narrated")),
+        ("design (music)", dur(ev.get("narrated"), "audio_designed")),
+        ("assemble (render)", dur(ev.get("audio_designed"), "produce_assembled")),
+        ("submit", dur(ev.get("produce_assembled"), "video_submitted")),
+    ]
+    print(f"\n=== PER-STAGE WALL-CLOCK — '{topic['t']}' (job {job_id}) ===")
     for name, s in stages:
         print(f"  {name:<20} {('%.1f min' % (s/60)) if s and s > 0 else '—'}")
     print(f"  {'TOTAL tick()':<20} {total/60:.1f} min")
-    reached = "video_submitted" in ev
-    print(f"\nReached the Telegram approval card: {'YES ✅ (DRY RUN — not tapped)' if reached else 'NO'}")
+    print(f"\nReached the Telegram approval card: YES ✅ (DRY RUN — not tapped)")
     if bot:
         await bot.shutdown()
     await conn.close()

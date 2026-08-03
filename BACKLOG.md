@@ -43,6 +43,29 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## The real 6c constraint is FOOTAGE COVERAGE, not the gate (2nd supervised run, 2026-08-03)
+- `[ ]` **The gate redesign works; the blocker is that most non-elephant subjects are footage-poor, and
+  discovering it via sourcing is expensive (~40 min/subject).** With the verdict gate dropped, the
+  supervised run let **lion PROCEED past its INFEASIBLE verdict** (the old gate would have wrongly
+  rejected it) → real film-wide source → **10 clear** (pool 1338 → 78 eligible → 10 clear; 64 rejected,
+  23 contradictions — "lion" queries pull sea lions / mountain lions / captive) → SOURCING_SHORT,
+  recorded with the actual clear_count=10. This is the redesign VINDICATED: sourcing, not the noisy
+  10-clip verdict, is the gate, and it gave a real answer. BUT: (a) lion's source took ~40 min — a low
+  clear-rate subject grinds the full max_verify=90; early-stop only helps HIGH-yield subjects. (b) Of 7
+  probed subjects only the elephant (54 clear) is footage-rich; lion=10, giraffe shallow/noisy
+  (E flipped 13↔28), flamingo flipped MARGINAL↔INFEASIBLE. **So the scheduler is CORRECT + SAFE (it
+  proceeds, records real yields, caps consecutive sourcing failures at 3, then pauses + alerts — it will
+  NOT churn forever) but it can only PRODUCE for footage-rich subjects.** No card this run — the
+  available non-elephant subjects don't source enough; per-stage timings still pending a productive one.
+  **DECISIONS for Banks:** (1) curate the playbook pool to KNOWN footage-rich subjects (elephant is the
+  proven one; more need discovery); and/or (2) reintroduce a CHEAP coverage pre-check that actually
+  predicts film-wide yield (a mid-size ~30-40-clip probe as an ADVISORY to ORDER the pool
+  most-likely-first, NOT a hard gate — the 10-clip verdict was the wrong tool), so the scheduler tries
+  the best-covered subject first instead of paying ~40 min to discover a thin one; and/or (3) accept a
+  2nd elephant (dry-run card, not on channel) purely to capture the per-stage timings. Unattended running
+  is SAFE now (it pauses + asks), just unproductive on a footage-poor pool. giraffe job 256 was killed
+  mid-source; playbook DISABLED.
+
 ## BLOCKS unattended 6c — the commissioning VERDICT-GATE is unreliable (found in the supervised run)
 - `[ ]` **The probe VERDICT is a poor commissioning gate; use the DISTRIBUTION, let sourcing be the gate.**
   The first supervised `tick()` (2026-08-02) exposed this on REAL probe data: of 7 subjects probed for the

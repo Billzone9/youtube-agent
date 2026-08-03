@@ -169,6 +169,10 @@ async def _commission(conn, pb, deps: Deps) -> None:
         rep = await probe_feasibility(conn, deps.providers, pick.subject, llm=deps.llm,
                                       channel_id=pb["channel_id"], runtime_s=pb["runtime_target_s"],
                                       n_beats=pb["n_beats"])
+        await record_event(conn, "probed",
+                           message=f"probed '{pick.subject}' E={rep.pool_depth} ({rep.verdict})",
+                           channel_id=pb["channel_id"], data={"subject": pick.subject,
+                                                              "pool_depth": rep.pool_depth})
         # THE ONLY probe gate now: a genuine pool-depth floor. INCONCLUSIVE-SHALLOW with a reasonable E
         # is a SEARCH-reach issue, not a subject issue, and proceeds; E below the floor = nothing there.
         if (rep.pool_depth or 0) < _MIN_POOL_DEPTH:
