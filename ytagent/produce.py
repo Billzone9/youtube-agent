@@ -499,10 +499,13 @@ async def _st_source(conn, state, *, providers, llm, channel, script):
 
 async def _spend_gate(conn, state, script, *, tts=None, per_job_threshold_gbp, enforce_ceiling, channel,
                       key_credit_cap=None):
-    est = estimate_production_cost(script, channel)
+    est = estimate_production_cost(script, channel, sfx_specs=(state.get("cfg") or {}).get("sfx_specs"))
     state["estimate_gbp"] = est.total_gbp
+    state["estimate"] = asdict(est)                       # persist full breakdown for estimate-vs-actual audit
     await record_event(conn, "spend_estimate",
-                       message=f"est £{est.total_gbp:.2f} (tts £{est.tts_gbp:.2f} + music £{est.music_gbp:.2f})",
+                       message=f"est £{est.total_gbp:.2f} (tts £{est.tts_gbp:.2f} + music £{est.music_gbp:.2f}"
+                               f" + sfx £{est.sfx_gbp:.2f} + llm £{est.llm_gbp:.2f}); "
+                               f"{est.elevenlabs_credits:.0f} EL credits",
                        channel_id=state["channel_id"], job_id=state["job_id"], data=asdict(est))
     # CREDITS gate FIRST — a spend we can't FUND must never clear on a pounds check alone (job 276's
     # gap: £9.10 < £50 cleared, then the key's 684 credits couldn't fund the ~4,989 needed).
@@ -534,10 +537,10 @@ async def _credit_gate(conn, state, script, *, tts, est, key_credit_cap):
                   if (b.vo or "").strip() and not os.path.exists(
                       os.path.join(workdir, f"narr_beat{b.index}.mp3")))
     music_done = bool(state.get("design")) or _design_files_exist(os.path.join(workdir, "audio"))
-    rem_music = 0 if music_done else est.music_credits
+    rem_music = 0 if music_done else (est.music_credits + est.sfx_credits)   # music + SFX draw the same pool
     needed, avail = rem_tts + rem_music, cs["remaining"]
     await record_event(conn, "credit_check",
-                       message=f"need {needed} credits (tts {rem_tts} + music {rem_music}); key has {avail}",
+                       message=f"need {needed} credits (tts {rem_tts} + music/sfx {rem_music}); key has {avail}",
                        channel_id=state["channel_id"], job_id=state["job_id"],
                        data={"needed": needed, "available": avail, "tts": rem_tts, "music": rem_music,
                              "key_cap": cs.get("key_cap"), "used": cs.get("used"),
