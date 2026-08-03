@@ -14,20 +14,48 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 
 ---
 
-## B3 governor — the balance reconciler (deferred; blocked on scope/credits — 2026-08-03)
-- `[ ]` **Settle ElevenLabs per-call ESTIMATES against the truth.** Every TTS/music row is
-  `reconciled=false`; only the lion score + a dev block are settled. The estimator is validated for
-  clean runs (job 155: estimate == actual, 1.00x on TTS AND music — see `estimate_vs_actual`), so this
-  is validation/precision, not a blocker. Two settlement sources, in preference order (decision 2):
-  1. **Per-call history — PREFERRED but scope-gated.** `GET /v1/history` returns exact per-call
-     `character_count_change` for TTS, but our key lacks `speech_history_read` (401 missing_permissions).
-     Adding that scope (human-only) gives exact TTS settlement. Music is NOT in history — no per-call
-     source exists for it, so music always needs the balance method.
-  2. **Balance-delta — fragile, needs a quiet window.** The subscription `character_count` moves on
-     every TTS+music call (unified pool), so a before/after delta around a known run gives the aggregate
-     correction. FRAGILITY (decision 2): a scheduler can commission unattended, contaminating the delta.
-     Guards required: run with the playbook DISABLED + assert no `producing`/in-flight jobs; bound the
-     delta to the outstanding estimates ± tolerance and ABORT (don't mis-attribute) if it exceeds that.
+## Anthropic cost — Claude Max for scripts (log only, NOT a cost measure — 2026-08-04)
+- `[ ]` **Move script/description LLM to a Claude Max subscription instead of API — tidiness, not savings.**
+  Be honest about the size: the TEXT LLM is not the cost centre. Scripts+description are ~£0.008/film
+  (job 155), and the whole per-film LLM saving from Max is roughly **3p/film**. The real Anthropic driver
+  is VISION (~£0.72/film, the sourcing gate — see next item), and **a Max subscription CANNOT serve API
+  vision calls** (it's for interactive/subscription use, not programmatic image analysis). So Max saves
+  the pennies and leaves the pounds untouched. Worth doing later for account tidiness; do NOT log it as a
+  cost measure or expect it to move the ROI.
+
+## Vision spend is the real Anthropic driver — reduce it (log options + est savings, DECIDE later)
+- `[ ]` **The sourcing vision gate (~£0.72/film) dwarfs all other Anthropic spend; early-stop + verdict
+  cache are built but the elephant run still verified far more candidates than the film needed** (42
+  verified, 29 cache-hits, for a film needing ~27 clear). Concrete levers, with rough savings for Banks
+  to decide between (NOT built — numbers only; all estimates off the ~£0.72/film vision anchor):
+  1. **Tighter early-stop multiple** (currently 1.5× Σn_target). Drop to ~1.2× → stop verifying sooner on
+     high-yield subjects. Est **~15–20% (~£0.11–0.14/film)**. Lowest risk (pure threshold; no accuracy loss
+     on the clips that DO get used). Downside: a slightly thinner reserve pool.
+  2. **Metadata pre-filter before ANY vision call** — drop candidates by title/tags negative keywords
+     ("zoo", "captive", "statue", wrong species) before spending a frame. Biggest lever: **~30–40%
+     (~£0.22–0.29/film)** if it removes a third of the pool pre-vision. Risk: metadata is unreliable (the
+     reason we vision-check at all), so keep it to OBVIOUS negatives — conservative filtering only.
+  3. **2 frames instead of 3** per candidate (currently majority-of-3). **~33% (~£0.24/film)** — but it
+     removes the majority tiebreak the vision-gate-standard was calibrated on; needs recalibration on the
+     3-frame fixtures before trusting it. Medium risk to gate accuracy.
+  4. **Batch + prompt-cache** — cache the (large, fixed) vision system prompt across candidates and/or
+     send multiple frames per request. **~10–20%** on input tokens, near-zero accuracy risk; more
+     engineering than (1). Composes with the others.
+  Options 1+2 together (~£0.35/film, low risk) look like the sweet spot, but Banks decides. Measure the
+  actual per-call vision cost first to firm up these estimates before building any of them.
+
+## B3 governor — the music balance reconciler (deferred; blocked on cap/quiet-window — 2026-08-04)
+- `[ ]` **Settle ElevenLabs MUSIC per-call estimates against the truth.** TTS is now SETTLED (job 155:
+  4,379 est vs 4,378 settled, 1.00x, all 18 rows by request_id via `reconcile_tts.py`). MUSIC remains
+  `reconciled=false` (no per-call history exists for it), so its rate is still the ~12.5 cr/s from ONE
+  hand-seeded lion row. Settle it via the guarded balance-delta (playbook disabled + assert no in-flight
+  jobs + bound the delta to outstanding estimates), which also needs the near-exhausted key's cap raised
+  to run a clean calibrated generation. The estimator is validated for TTS; this closes music.
+  Balance-delta guards (fragile — the subscription `character_count` moves on every TTS+music call, and a
+  scheduler can contaminate the window): run with the playbook DISABLED + assert no `producing`/in-flight
+  jobs; bound the delta to the outstanding estimates ± tolerance and ABORT (don't mis-attribute) if it
+  exceeds that. (`GET /v1/history` — the source that settled TTS — has no music equivalent, so music can
+  only be settled this way.)
   - Currently ALSO blocked by the near-exhausted key (684 credits) — can't run a fresh calibrated music
     generation to measure credits/sec until the cap is raised. Build the guarded reconciler then.
 
