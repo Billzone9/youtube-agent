@@ -31,28 +31,37 @@ async def run():
           SELECT job_id,
                  SUM(amount_gbp) act_gbp,
                  SUM(credits) FILTER (WHERE provider='ElevenLabs TTS') act_tts,
-                 SUM(credits) FILTER (WHERE provider='ElevenLabs Music') act_music
+                 SUM(credits) FILTER (WHERE provider='ElevenLabs Music') act_music,
+                 bool_and(reconciled) FILTER (WHERE provider='ElevenLabs TTS') tts_settled,
+                 bool_and(reconciled) FILTER (WHERE provider='ElevenLabs Music') music_settled
           FROM cost_ledger WHERE job_id IS NOT NULL GROUP BY job_id)
         SELECT e.job_id, j.status,
-               e.est_gbp, a.act_gbp, e.est_tts, a.act_tts, e.est_music, a.act_music
+               e.est_gbp, a.act_gbp, e.est_tts, a.act_tts, e.est_music, a.act_music,
+               a.tts_settled, a.music_settled
         FROM est e JOIN act a USING (job_id) JOIN jobs j ON j.id=e.job_id
         ORDER BY e.job_id DESC""")).fetchall()
 
     print("ESTIMATE vs ACTUAL (per job that hit the spend gate)")
-    print("=" * 78)
-    print(f"  {'job':>4} {'status':<10} {'est £':>7} {'act £':>7} {'TTS e/a':>13} {'Music e/a':>13}")
+    print("=" * 80)
+    print(f"  {'job':>4} {'status':<10} {'est £':>7} {'act £':>7} {'TTS e/a':>16} {'Music e/a':>16}")
     if not rows:
-        print("  (no job has both a persisted estimate AND ledgered actuals yet — the estimate is")
-        print("   recorded from the next gated production onward; job 276 paused before full spend.)")
+        print("  (no job has both a persisted estimate AND ledgered actuals yet.)")
     for r in rows:
-        def ea(e, a):
+        def ea(e, a, settled):
             e = float(e or 0); a = float(a or 0)
-            return f"{e:.0f}/{a:.0f}" + ("" if not a else f" {e/a:.2f}x" if a else "")
+            if not a:
+                return f"{e:.0f}/—"
+            # A ratio against an UNRECONCILED row is the estimate vs ITSELF (both from seconds×15 /
+            # char-count) — meaningless. Only show a ratio once the row is actually settled.
+            return f"{e:.0f}/{a:.0f} {e/a:.2f}x" if settled else f"{e:.0f}/{a:.0f} UNSETTLED"
         print(f"  {r['job_id']:>4} {r['status']:<10} "
               f"£{float(r['est_gbp'] or 0):>5.2f} £{float(r['act_gbp'] or 0):>5.2f} "
-              f"{ea(r['est_tts'], r['act_tts']):>13} {ea(r['est_music'], r['act_music']):>13}")
-    print("\nNotes: TTS is char-exact (estimate should ≈ actual). Music actual rows are per-call")
-    print("ESTIMATES until the balance reconciler settles them; a real skew shows only after settlement.")
+              f"{ea(r['est_tts'], r['act_tts'], r['tts_settled']):>16} "
+              f"{ea(r['est_music'], r['act_music'], r['music_settled']):>16}")
+    print("\nUNSETTLED = the actual row is reconciled=false, written from the SAME char-count / seconds×15")
+    print("model the estimate uses — so a ratio would be the estimate compared to itself, not validation.")
+    print("A real ratio appears only after settlement: TTS via reconcile_tts.py (once speech_history_read")
+    print("is on the key), music via the balance-delta. Only then is a 1.00x meaningful.")
     await conn.close()
 
 

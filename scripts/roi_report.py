@@ -17,6 +17,12 @@ from ytagent.budget import budget_status
 from ytagent.config import load_settings
 
 _FILMS_PER_MONTH = 8.67          # 2/week × 52/12
+# Music rate: the GATE uses 15.0 cr/s (erring high is correct for a gate). The only SETTLED evidence is
+# the lion — 1,500 credits for 120.06s of cues = 12.49 cr/s — so per-film COST is reported at 12.49.
+# Ledgered music £ is written at 15/s, so the honest cost is that × (12.49/15.0). Gate high, report honest.
+_GATE_MUSIC_CR_PER_S = 15.0
+_SETTLED_MUSIC_CR_PER_S = 12.49
+_SETTLE = _SETTLED_MUSIC_CR_PER_S / _GATE_MUSIC_CR_PER_S     # 0.833 — scale ledgered (15/s) music to settled
 
 
 def _g(x):
@@ -30,28 +36,30 @@ async def run():
     bud = await budget_status(conn)
 
     print("=" * 74)
-    print("PER-FILM PRODUCTION COST — by provider (the number that decides cadence)")
+    print("PER-FILM PRODUCTION COST — by provider, at the SETTLED music rate (12.49 cr/s)")
     print("=" * 74)
-    print(f"  {'job':>4} {'film':<26} {'status':<10} {'TTS':>7} {'Music':>7} {'LLM':>8} {'TOTAL':>8}")
+    print(f"  {'job':>4} {'film':<24} {'status':<10} {'TTS':>7} {'Music':>7} {'LLM':>7} {'TOTAL':>8}")
     complete = []
     for r in b["per_film"]:
-        film = (r["film"] or "?")[:26]
-        tot = _g(r["total"])
+        film = (r["film"] or "?")[:24]
+        music_settled = _g(r["music"]) * _SETTLE          # ledger is 15/s; report at settled 12.49/s
+        tot = _g(r["tts"]) + music_settled + _g(r["llm"])
+        gate_tot = _g(r["tts"]) + _g(r["music"]) + _g(r["llm"])    # music at the 15/s gate rate
         if r["status"] == "assembled" and _g(r["music"]) > 0:      # a full production (audio designed)
-            complete.append(tot)
-        print(f"  {r['id']:>4} {film:<26} {r['status']:<10} £{_g(r['tts']):>5.2f} "
-              f"£{_g(r['music']):>5.2f} £{_g(r['llm']):>6.4f} £{tot:>6.2f}")
+            complete.append((tot, gate_tot))
+        print(f"  {r['id']:>4} {film:<24} {r['status']:<10} £{_g(r['tts']):>5.2f} "
+              f"£{music_settled:>5.2f} £{_g(r['llm']):>5.3f} £{tot:>6.2f}")
 
-    ref = max(complete) if complete else 0.0
+    ref, ref_gate = max(complete) if complete else (0.0, 0.0)      # settled headline + its gate-rate twin
     print("\n" + "-" * 74)
     print("CADENCE AFFORDABILITY — ElevenLabs is the cost centre, not Anthropic")
     print("-" * 74)
-    print(f"  reference COMPLETE film (full audio design): £{ref:.2f}  "
-          f"(≈{'99%' if ref else '—'} ElevenLabs TTS+Music, LLM is pennies)")
+    print(f"  reference COMPLETE film (settled 12.49 cr/s) : £{ref:.2f}  (≈99% ElevenLabs, LLM is pennies)")
+    print(f"  same film at the GATE rate (15 cr/s, err-high): £{ref_gate:.2f}  ← what the spend gate quotes")
     monthly = ref * _FILMS_PER_MONTH
     ceiling = _g(bud["ceiling_gbp"])
     print(f"  at 2 films/week  →  {_FILMS_PER_MONTH:.1f} films/mo × £{ref:.2f} = "
-          f"£{monthly:.0f}/mo production")
+          f"£{monthly:.0f}/mo production (honest); £{ref_gate * _FILMS_PER_MONTH:.0f}/mo at the gate rate")
     head = ceiling - monthly
     print(f"  vs £{ceiling:.0f} tier-1 ceiling  →  {'£%.0f headroom' % head if head >= 0 else 'OVER by £%.0f' % -head}"
           f"  ({monthly/ceiling*100:.0f}% of ceiling on production alone)" if ceiling else "")
@@ -83,8 +91,11 @@ async def run():
     print("  • LLM spend before 2026-07-31 is UNDER-recorded by sub-penny rounding (pre-migration-0007:")
     print("    amount_gbp was 2dp, so Haiku calls < ~£0.005 logged as £0.00). Reconcile early LLM against")
     print("    the live Anthropic USD balance, not the early GBP ledger sum. Post-0007 spend is exact.")
-    print("  • ElevenLabs music/TTS rows are per-call ESTIMATES (reconciled=false) until a balance pass")
-    print("    settles them; TTS is char-exact so accurate, music settles async. See estimate_vs_actual.")
+    print("  • ElevenLabs music/TTS rows are per-call ESTIMATES (reconciled=false) until settled; TTS is")
+    print("    char-exact, music settles async. See estimate_vs_actual (shows UNSETTLED, not a fake ratio).")
+    print("  • MUSIC RATE: the gate uses 15.0 cr/s (err-high, correct for a gate); the only SETTLED datum")
+    print("    is the lion (1,500 cr / 120.06s = 12.49 cr/s). Per-film cost above is at 12.49; the ledgered")
+    print("    buckets (production/calibration) are at 15/s and settle ~17% lower once reconciled.")
     await conn.close()
 
 
