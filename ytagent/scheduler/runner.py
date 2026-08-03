@@ -254,9 +254,13 @@ async def _run_job(conn, pb, job, deps: Deps) -> str:
                            f"(spent assets preserved for a fix + resume):\n<code>{e}</code>")
         deps.summary["failed"].append((job["id"], "deterministic"))
         return "deterministic"
-    except TTSScopeError as e:                              # config blocker — nothing can be produced
+    except TTSScopeError as e:                              # config/spend blocker — nothing can be produced
+        # covers TTSQuotaError (hard key cap) + genuine scope failures; persist WHY (the old path only
+        # alerted, leaving jobs.error empty — which blinded the job-276 diagnosis).
         await repo.playbooks.set_state(conn, pb["id"], "blocked")
-        await _alert(deps, f"🛑 <b>{deps.channel['name']}</b> BLOCKED — TTS scope: <code>{e}</code>")
+        await conn.execute("UPDATE jobs SET status='failed', error=%s WHERE id=%s", [str(e), job["id"]])
+        await _alert(deps, f"🛑 <b>{deps.channel['name']}</b> job {job['id']} BLOCKED (TTS): "
+                           f"<code>{e}</code>")
         deps.summary["blocked"].append(job["id"])
         return "blocked"
     except Exception as e:  # noqa: BLE001 — TRANSIENT (network/5xx/timeout): retry with backoff

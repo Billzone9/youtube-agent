@@ -8,7 +8,7 @@ import os
 
 import httpx
 
-from .base import TTSResult, TTSScopeError
+from .base import TTSQuotaError, TTSResult, TTSScopeError
 
 _BASE = "https://api.elevenlabs.io/v1/text-to-speech"
 _TIMEOUT = httpx.Timeout(120.0, connect=15.0)
@@ -34,9 +34,23 @@ class ElevenLabsTTS:
         except httpx.HTTPError as e:
             raise RuntimeError(f"ElevenLabs TTS request failed: {e}") from e
         if r.status_code in (401, 403):
+            # surface ElevenLabs' ACTUAL reason — a 401 is either a real scope/auth failure OR the key's
+            # hard credit cap being hit (`quota_exceeded`); they need different human actions, and the
+            # old code discarded the body and always blamed scope (which misdiagnosed job 276).
+            detail, code = "", ""
+            try:
+                d = r.json().get("detail") or {}
+                detail = d.get("message") or ""
+                code = (d.get("status") or d.get("code") or "").lower()
+            except Exception:  # noqa: BLE001 — non-JSON body
+                detail = r.text[:300]
+            if code == "quota_exceeded":
+                raise TTSQuotaError(
+                    f"ElevenLabs key credit cap exhausted — {detail} Raise/reset the key's quota in the "
+                    f"ElevenLabs dashboard (human-only spend change), then resume (no re-charge).")
             raise TTSScopeError(
-                f"ElevenLabs {r.status_code}: the key likely lacks the Text-to-Speech scope — add TTS "
-                f"scope (or a TTS-scoped key) in the ElevenLabs dashboard (human-only spend change).")
+                f"ElevenLabs {r.status_code}: {detail or 'the key likely lacks the Text-to-Speech scope'} "
+                f"— add TTS scope (or a TTS-scoped key) in the ElevenLabs dashboard (human-only).")
         if r.status_code != 200:
             raise RuntimeError(f"ElevenLabs TTS HTTP {r.status_code}: {r.text[:200]}")
         content = r.content

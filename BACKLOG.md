@@ -14,6 +14,32 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 
 ---
 
+## KEY CAP HIT mid-production — the spend control worked; card BLOCKED on a human cap raise (2026-08-03)
+- `[~]` **The ElevenLabs key "Youtube Agent" has a hard 15,000-credit cap and is down to 686.** The
+  supervised elephant run (job 276) got through script + source, voiced beats 1–2, then ElevenLabs
+  returned `401 quota_exceeded`: *"exceeds your API key quota of 15000 — 686 remaining, 756 required."*
+  This is the STRUCTURAL SPEND CONTROL doing exactly its job (CLAUDE.md: scoped keys with hard credit
+  caps) — it stopped the machine mid-production. **To complete ANY production Banks must raise/reset the
+  key's quota (human-only spend change).** This film needs ~4,364 TTS + ~2,475 music ≈ 6,800 credits;
+  ~1,850 already spent on beats 1–2, so ~5,000 more are needed → raise the cap to ~20,000 (or reset it).
+  Then `JOB=276 python -m scripts.resume_job` completes to the card (beats 1–2 reload free — per-beat
+  idempotent now). **Both TTS and music draw the SAME capped key**, so the whole tail is gated on this.
+- `[x]` **Fixed: the client mislabelled `quota_exceeded` as "lacks TTS scope" and discarded ElevenLabs'
+  body** — the false diagnosis that sent me hunting a scope/rate problem. `elevenlabs.py` now parses the
+  401 body and raises `TTSQuotaError` (new, subclass of `TTSScopeError`) with the real message on a cap
+  hit, `TTSScopeError` with the real body otherwise.
+- `[x]` **Fixed: no retry + wrong classification on TTS calls.** `produce._synthesize_beat` now retries
+  genuine transients (429/5xx/network, and a non-quota 401 after a prior success) with backoff, but
+  FAILS FAST on `TTSQuotaError` (a hard cap is not transient) and on a first-call scope failure.
+- `[x]` **Fixed: per-beat TTS idempotency.** A partial-resume re-charged already-voiced beats (the
+  stage-level reload only fired when ALL beats existed). `_tts_all_beats` now reloads any beat whose mp3
+  is already on disk — no re-charge.
+- `[x]` **Fixed: the runner's `blocked` path persisted no reason.** It only alerted Telegram, leaving
+  `jobs.error` empty (which blinded the job-276 diagnosis). It now writes `str(e)` to `jobs.error`.
+- `[ ]` **Per-stage timings still partial:** script 2.0 min, source 5.8 min (WARM — 29 of 42 verified
+  were cache hits; cold ≈ 30–40 min), TTS partial (2/6 beats), design/assemble/submit UNREACHED. A cap
+  raise + resume yields the missing design/assemble/submit numbers on the next run.
+
 ## Phase 0 polish (non-blocking)
 - `[ ]` Add more ocean clips to `~/youtube-agent/assets/clips/`, then rebuild for a longer loop
   (slim bitrate already baked into `build_master.sh`). Reduces visible repetition.

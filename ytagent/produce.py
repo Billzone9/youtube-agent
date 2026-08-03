@@ -33,10 +33,38 @@ from .metadata.research import UnavailableResearch
 from .orchestrator import assembly_ping_text, submit_video_for_approval
 from .scheduler.cost import estimate_production_cost
 from .sourcing import NoMatch, source_clips_for_brief, source_film
+from .tts import TTSQuotaError, TTSScopeError
 
 # ElevenLabs multilingual_v2 ≈ 1 credit/char; marginal GBP mirrors the lion-music baseline (£2/1500cr).
 _CREDITS_PER_CHAR = 1.0
 _GBP_PER_CREDIT = 0.00133
+_TTS_MAX_TRIES = 3
+_TTS_BACKOFF_S = 3.0
+
+
+async def _synthesize_beat(tts, text, *, voice_id, dst, model, any_success):
+    """Synthesize ONE beat with a bounded retry, distinguishing three failure kinds:
+    - TTSQuotaError (the key's HARD credit cap is hit — what actually killed job 276 on beat 3, with
+      686 of the key's 15,000 credits left): NOT transient → fail fast so Banks raises the cap.
+    - TTSScopeError on the very first beat (no prior success this run): a real missing-scope config
+      problem → raise at once so the conductor blocks with a clear human action.
+    - A non-quota 401/403 AFTER a beat already succeeded, or any 429/5xx/network RuntimeError: treat as
+      transient → retry with linear backoff, then re-raise if it persists."""
+    last = None
+    for attempt in range(1, _TTS_MAX_TRIES + 1):
+        try:
+            return await asyncio.to_thread(tts.synthesize, text, voice_id=voice_id, dst=dst, model=model)
+        except TTSQuotaError:              # HARD credit cap — the spend control; never transient, fail fast
+            raise
+        except TTSScopeError as e:
+            if not any_success:            # first call ever → genuine scope config failure, fail fast
+                raise
+            last = e                       # mid-film 401/403 (non-quota) → treat as transient, retry
+        except Exception as e:  # noqa: BLE001 — 429 / 5xx / network → transient
+            last = e
+        if attempt < _TTS_MAX_TRIES:
+            await asyncio.sleep(_TTS_BACKOFF_S * attempt)
+    raise last
 _PRODUCED_ROOT = "assets/produced"
 # The resumable production stages, in order. A completed stage checkpoints its artifacts + records the
 # stage on the job BEFORE the next begins; resume re-enters at the first incomplete stage (6b).
@@ -174,12 +202,18 @@ async def _tts_all_beats(conn, script, *, tts, voice_id, model, workdir, channel
                               "precondition.")
     narration_texts = script.to_narration()
     narration = {}
+    any_success = False
     for b in script.beats:
         text = narration_texts[f"beat{b.index}"]
         if not text.strip():              # WORDLESS beat (cold open) — no TTS call, no spend
             continue
         ndst = os.path.join(workdir, f"narr_beat{b.index}.mp3")
-        r = await asyncio.to_thread(tts.synthesize, text, voice_id=voice_id, dst=ndst, model=model)
+        if os.path.exists(ndst):          # already voiced (partial-resume) → reload, NO re-charge
+            narration[b.index] = ndst      # cost was ledgered on first write (idempotent key)
+            any_success = True
+            continue
+        r = await _synthesize_beat(tts, text, voice_id=voice_id, dst=ndst, model=model,
+                                   any_success=any_success)
         g = aqc.check_source_clean(r.path)
         if not g.ok:
             raise ProductionError(f"beat{b.index} narration failed the noise gate: {g.checks}")
@@ -190,6 +224,7 @@ async def _tts_all_beats(conn, script, *, tts, voice_id, model, workdir, channel
             amount_gbp_est=round(credits * _GBP_PER_CREDIT, 4), request_id=r.request_id,
             model=model, voice_id=voice_id)
         narration[b.index] = r.path
+        any_success = True
     await record_event(conn, "narrated", message=f"{len(narration)} beats voiced ({model})",
                        channel_id=channel_id, job_id=job_id)
     return narration

@@ -12,8 +12,15 @@ class TTSUnavailable(RuntimeError):
 
 
 class TTSScopeError(RuntimeError):
-    """The API rejected the request (401/403) — typically the key lacks the Text-to-Speech scope.
-    A spend-capability change is human-only (add TTS scope / a TTS-scoped key)."""
+    """The API rejected the request with a hard 401/403 that a retry won't fix — the key lacks the
+    Text-to-Speech scope, or (subclass below) its credit cap is exhausted. Either way the remedy is a
+    human-only spend-capability change (add TTS scope / a TTS-scoped key / raise the key's cap)."""
+
+
+class TTSQuotaError(TTSScopeError):
+    """The key's HARD CREDIT CAP is exhausted (ElevenLabs 401 `quota_exceeded`). This is the structural
+    spend control working as designed — the key cannot spend past its cap. NOT transient: never retry.
+    Resuming after Banks raises/resets the key's quota re-charges nothing already voiced (idempotent)."""
 
 
 @dataclass(frozen=True)
