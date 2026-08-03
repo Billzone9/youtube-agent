@@ -18,11 +18,15 @@ def _slug(title: str) -> str:
 
 def bind_short_spec(clips, *, bed: str | None = None, duration_s: float = 30.0, title: str = "short",
                     fmt: str = "9:16", fade_in: float = 0.4, fade_out: float = 0.6,
-                    bed_db: float = -24.0) -> EditSpec:
+                    bed_db: float = -30.0) -> EditSpec:
     """Bind a CREDIT-LIGHT Short: 1–3 distinct sourced clips as ONE micro-cut beat (9:16), an ambient
     bed under it, explicit duration, NO narration (footage + ambience — 0 TTS). `bed` should come from
     `beds.pick_bed` (attested/claim-safe). The Shorts density gate (`short=True`) applies at assemble;
-    `duration_s` must be ≤ SHORTS_MAX_S (enforced there). A hook/voice variant is a later follow-up."""
+    `duration_s` must be ≤ SHORTS_MAX_S (enforced there). A hook/voice variant is a later follow-up.
+    `bed_db` = −30 MEASURED, not guessed: on a voiceless Short the bed IS the whole program, so the
+    master loudnorm normalises it to target regardless of this pre-level — −24 vs −30 gave identical
+    noise (hi16k −90.3) and loudness (−12.3 LUFS) in scripts/prove_short_render, so it's unified to
+    long-form's −30 rather than an undefended special-case."""
     from ..sourcing import to_clip                                # lazy: avoid the sourcing↔assembly cycle
 
     tgt = (Target(fmt="9:16", w=1080, h=1920, fps=30) if fmt == "9:16"

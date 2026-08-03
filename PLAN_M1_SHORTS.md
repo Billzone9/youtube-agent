@@ -37,9 +37,21 @@ A′ exists to produce evidence for the tier-B decision, so the bar is set BLIND
 - **Floor (rule out "both zero"):** if the channel gains < ~25 subscribers total in the window, the test
   is INCONCLUSIVE — a content-quality problem, not a format one; don't read it either way.
 - **Dependency:** measurement needs YouTube Analytics (Layer-2/B4 — a new OAuth scope + security review).
-  It's retrospective, so it can be wired after the run, but the run must be TAGGED (a cohort marker on
-  each Short) so the two cohorts are separable later. **Banks may adjust these thresholds now, before
-  data — not after.**
+  It's retrospective, so it can be wired after the run, but the run must be TAGGED so the two cohorts are
+  separable later. **Banks may adjust these thresholds now, before data — not after.**
+- **WHERE THE COHORT TAG LIVES (stated before building — note 2).** Analytics reports on the *published*
+  video, so the tag must be recoverable from the YouTube side, not only a local row:
+  - **Primary join:** a new `videos.cohort` column (e.g. `"m1-shorts"` / `"m1-longform"`) alongside the
+    `youtube_video_id` we already store. The retrospective Analytics pull queries metrics by that set of
+    video IDs. Sufficient *while the DB persists*.
+  - **YouTube-side survival (the actual requirement):** every cohort video is added to an **UNLISTED
+    cohort playlist**. Playlist membership is retrievable via the Data API (`playlistItems.list`), so the
+    cohort is reconstructable **from YouTube alone** if the DB is lost — and an unlisted playlist is NOT
+    viewer-facing, so it never pollutes public metadata.
+  - **NOT** in tags / title / description — `public-facing-output-standard` forbids internal artifacts in
+    viewer-facing fields; a cohort marker there would be a leak.
+  - **Build:** a `videos.cohort` migration + set it at publish; `playlistItems.insert` in the publish step
+    (force-ssl already covers it). This is part of the submit/publish increment, not the binder.
 
 ### 3. The mix's actual monthly credit draw (both ends) — honest, and it's tight
 Long-form ~1/week = ~4.33/mo × ~6,850 cr = **~29,660 cr/mo — nearly the entire 30,000 recurring on its
