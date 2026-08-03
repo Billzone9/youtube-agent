@@ -14,6 +14,23 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 
 ---
 
+## B3 governor — the balance reconciler (deferred; blocked on scope/credits — 2026-08-03)
+- `[ ]` **Settle ElevenLabs per-call ESTIMATES against the truth.** Every TTS/music row is
+  `reconciled=false`; only the lion score + a dev block are settled. The estimator is validated for
+  clean runs (job 155: estimate == actual, 1.00x on TTS AND music — see `estimate_vs_actual`), so this
+  is validation/precision, not a blocker. Two settlement sources, in preference order (decision 2):
+  1. **Per-call history — PREFERRED but scope-gated.** `GET /v1/history` returns exact per-call
+     `character_count_change` for TTS, but our key lacks `speech_history_read` (401 missing_permissions).
+     Adding that scope (human-only) gives exact TTS settlement. Music is NOT in history — no per-call
+     source exists for it, so music always needs the balance method.
+  2. **Balance-delta — fragile, needs a quiet window.** The subscription `character_count` moves on
+     every TTS+music call (unified pool), so a before/after delta around a known run gives the aggregate
+     correction. FRAGILITY (decision 2): a scheduler can commission unattended, contaminating the delta.
+     Guards required: run with the playbook DISABLED + assert no `producing`/in-flight jobs; bound the
+     delta to the outstanding estimates ± tolerance and ABORT (don't mis-attribute) if it exceeds that.
+  - Currently ALSO blocked by the near-exhausted key (684 credits) — can't run a fresh calibrated music
+    generation to measure credits/sec until the cap is raised. Build the guarded reconciler then.
+
 ## Two minor items from the job-276 resume (log now, fix later — 2026-08-03)
 - `[ ]` **Music placeholder path when TTS resumes from cache.** When TTS reloads voiced beats from disk
   on resume (per-beat idempotency), the design/music stage's reference to the narration can fall back to
