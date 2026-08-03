@@ -52,8 +52,8 @@ The proof that the creative output can be genuinely good, done by hand before au
 `[x]` Provenance reconciled and audited — 17 clips, every source URL logged in
   `lion-doc-01-footage-manifest.md` (swapped clips recovered from embedded Pexels asset IDs).
 `[x]` Reviewed by Banks: APPROVED. The film is LOCKED — do not alter it.
-`[ ]` Publish — DEFERRED BY DESIGN. Use this film as the known-good TEST ARTIFACT for the publishing
-  slice (1.3 → slice 2), so publishing is proven through the machine, not done by hand.
+`[x]` Publish — DONE. Publishing was proven through the machine (slice 2), and two documentaries are
+  live on `@TheTalesofWildlifeandNature` (`yGdNuUB5f_I`, `EY9DhJdnt_w`), published 2 Aug 2026.
 
 **Learnings from 1.1 (carry forward):** compact thematic cues + FFmpeg volume automation, loop/reuse
 over over-generating; ElevenLabs bills music ASYNCHRONOUSLY (reconcile against live balance); spend
@@ -64,25 +64,26 @@ control is STRUCTURAL (scoped key + per-key cap); the lion score cost ~1,500 cre
 Not a separate hand-cranked step. Once the assembly/sourcing/script slices work, the **agent**
 produces the library — each video through the approval gate, with variation enforced (spec §12).
 
-### 1.3 Build the platform engine — IN PROGRESS (the current focus)
+### 1.3 Build the platform engine — the production pipeline (Slices 1–6) is DONE
 Automate the proven pipeline AND stand up the platform capabilities, in thin, independently-provable
 slices (never big-bang). Add stack pieces only when a slice needs them; plan mode before each slice;
 the lion film is the test artifact; apply the channel-general + dashboard-ready architecture from
-slice 1. (Full brief: `CLAUDE.md`.)
+slice 1. (Full brief: `CLAUDE.md`.) **Slices 1–6 are built and green under `scripts/health.py`; the
+research stage (5) is wired but its grounded-research source is still manual.**
 
-`[ ]` **Slice 1 — Spine + gate.** Channel-general, dashboard-ready Postgres schema (`channels`;
+`[x]` **Slice 1 — Spine + gate.** Channel-general, dashboard-ready Postgres schema (`channels`;
   jobs/videos/approvals; **cost ledger** AND **revenue ledger**, all keyed by channel); Telegram
   approval with inline Approve/Reject for a finished video; orchestrator records every step. Publish
-  = DRY RUN (no credentials yet). Test with the lion film.
-`[ ]` **Slice 2 — Real publishing.** YouTube Data API OAuth (scoped to upload). Real
-  upload-on-approval; the lion film goes live behind Banks's yes. (Dependency: which channel, and it exists.)
-`[ ]` **Slice 3 — Assembly.** Reproduce the lion edit as an automated job; design for **multiple
-  formats/aspect ratios** (long-form now, native Shorts-ready). Lion film = reference output.
-`[ ]` **Slice 4 — Asset sourcing.** Automated claim-safe footage/audio sourcing + per-asset provenance.
-`[ ]` **Slice 5 — Script + research.** Footage-led script via the AI-provider layer + grounded
-  research, with **competitor/trend monitoring** feeding the playbook.
-`[ ]` **Slice 6 — Scheduler / playbook.** Decides what to produce next per channel (informed by
-  trend/competitor data + performance); closes the loop to autonomy.
+  = DRY RUN (no credentials yet). Tested with the lion film.
+`[x]` **Slice 2 — Real publishing.** YouTube Data API OAuth (scoped to upload). Real
+  upload-on-approval; two films live behind Banks's yes on `@TheTalesofWildlifeandNature`.
+`[x]` **Slice 3 — Assembly.** Automated lion-edit reproduction; **multiple formats/aspect ratios**
+  built — 16:9 AND 9:16 are first-class (proven), so native Shorts is not an assembly retrofit.
+`[x]` **Slice 4 — Asset sourcing.** Automated claim-safe footage/audio sourcing + per-asset provenance.
+`[x]` **Slice 5 — Script + research.** Footage-led script via the AI-provider layer; grounded research
+  source still MANUAL (A1 outstanding). Competitor/trend monitoring is not yet feeding the playbook.
+`[x]` **Slice 6 — Scheduler / playbook.** Decides what to produce next per channel; resumable
+  production state machine; closes the loop to autonomy (trend/competitor + performance inputs pending).
 
 Platform capabilities layered in as slices need them (all first-class — spec §4, §14):
 `[ ]` Native Shorts / multi-format production (§14.4).
@@ -92,8 +93,10 @@ Platform capabilities layered in as slices need them (all first-class — spec �
 `[ ]` Competitor & trend analysis — always-on, feeding the playbook and the dashboard (§14.5).
 `[ ]` Product discovery (affiliate/own products per niche) (§4.7) and **all-revenue-stream tracking**
   (AdSense, affiliate, sponsorship, products) (§14.3).
-`[ ]` Cost & ROI/ROAS governor — per-job estimate + **GLOBAL** monthly ceiling (£200→£350→£500);
-  reports ROI **and** ROAS; ledgers seeded with fixed costs so month-1 data is honest (§4.10, §14.2, §14.8).
+`[~]` Cost & ROI governor — DONE (B3): per-job estimate across all providers, spend gate with a
+  Telegram approval card, credit gate, GLOBAL monthly ceiling, honest bucketed ROI (fixed/production/
+  calibration), TTS settled + validated. Outstanding: **ROAS** (needs paid campaigns → the marketing
+  arc) and the music balance-delta reconciler (§4.10, §14.2, §14.8).
 `[ ]` Swappable AI-provider layer (§4.4); MLA dubbing (§8); onboarding interview for new channels (§4.2).
 `[ ]` No-code dashboard cockpit (React + Tailwind) — overview, work engine, audit timeline, command
   console, no-code channel controls, channel deep-dive, approvals; ROI + ROAS and revenue by stream (§4.8).

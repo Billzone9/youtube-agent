@@ -131,6 +131,18 @@ async def run():
         check("playbook back to idle with next_run scheduled (cadence)",
               pbx["state"] == "idle" and pbx["next_run_at"] is not None, pbx["state"])
 
+        print("[2c] subject-terms FLAG is non-blocking: a bare polysemous term still commissions")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["lion"])
+        produce.produce_video = _mk_produce("submit")
+        await tick(conn, _deps(ch, _Notifier()))
+        flagged = await (await conn.execute(
+            "SELECT count(*) n FROM events WHERE channel_id=%s AND type='subject_term_flagged'", [cid])).fetchone()
+        check("bare 'lion' emitted a subject_term_flagged event", flagged["n"] >= 1, str(flagged["n"]))
+        lion_status = {r["subject"]: r["status"] for r in await repo.subjects.list_for_channel(conn, cid)}
+        check("...and STILL commissioned (flag did not block)", lion_status.get("lion") == "produced",
+              lion_status.get("lion"))
+
         print("[2b] sourcing is the REAL gate: consecutive sourcing failures capped at 3 → pause")
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
         await _reset_pb(conn, cid, pool=["s1", "s2", "s3", "s4"])

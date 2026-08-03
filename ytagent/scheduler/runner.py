@@ -29,6 +29,7 @@ from ..events import record_event
 from ..sourcing.feasibility import probe_feasibility
 from ..tts import TTSScopeError
 from .selection import next_subject
+from .subject_terms import flag_if_ambiguous
 
 _MAX_ATTEMPTS = 3            # transient retries before a job is failed
 _BACKOFF_BASE_S = 60         # transient backoff = base × 2^(attempt-1)
@@ -165,6 +166,13 @@ async def _commission(conn, pb, deps: Deps) -> None:
         if pick.subject is None:                 # pool exhausted / cap reached / needs LLM
             await _pause_pool(conn, pb, deps, f"no subject to commission ({pick.reason})")
             return
+        # subject-terms-standard: FLAG a bare polysemous term (advisory) — never blocks; sourcing gates.
+        flag = flag_if_ambiguous(pick.subject)
+        if flag:
+            await record_event(conn, "subject_term_flagged",
+                               message=f"'{pick.subject}' is ambiguous — try '{flag['suggestion']}' "
+                                       f"(commissioning proceeds; sourcing is the gate)",
+                               channel_id=pb["channel_id"], data=flag)
         subj = await repo.subjects.record(conn, channel_id=pb["channel_id"], subject=pick.subject,
                                           source=pick.source, status="proposed")
         rep = await probe_feasibility(conn, deps.providers, pick.subject, llm=deps.llm,

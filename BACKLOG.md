@@ -14,6 +14,28 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 
 ---
 
+## Platform-completion deferrals & dated items (2026-08-04)
+- `[ ]` **DATED — 2026-08-27: verify the ElevenLabs recurring-allowance constant.** After the billing
+  cycle resets, re-read `character_limit` via `credit_status()`. If it returns ~30,000, the recurring
+  base is confirmed — mark `config._STARTER_RECURRING_ALLOWANCE_CR` **verified** and update its comment
+  (it is currently a labelled INFERENCE, not a sourced fact). If it returns higher, rollover was smaller
+  than assumed and the sustainable-cadence number (~4.4 films/mo) must be re-derived. Until then the ROI
+  report's cadence rests on an unverified inference — the comment is the only thing carrying that.
+- `[ ]` **MLA multilingual dubbing (§8) — DEFERRED, trigger: ANY ElevenLabs plan change.** Not dropped:
+  the blocker (up to 6× TTS spend on a Starter allowance that can't overage, no production runs) is a
+  Banks-temporary constraint. **Language-axis reservation finding:** the *metadata* language axis is
+  ALREADY reserved (`video_metadata.language`, `videos.primary_language`, language-keyed repo fns), so
+  that half is free. The *audio-track* axis is **deferred, not reserved** — it needs a per-language
+  narration path (multiplies TTS) and YouTube's MLA audio-track upload isn't a settled Data-API call
+  (Studio-era), so a schema stub would be speculative. Reserve the audio-track axis only when the MLA
+  upload mechanism is confirmed available programmatically.
+- `[ ]` **Social cross-posting (§14.7) — DEFERRED, gated on Shorts.** Corrected reason: the blocker is
+  NOT integration size — its value is almost entirely vertical short-form, so it has no payload until
+  native Shorts exist. **Revisit WITH Shorts, not separately** (same trigger). Assembly is already
+  9:16-capable; the unbuilt part is Shorts scheduling/scripting/upload.
+
+---
+
 ## Anthropic cost — Claude Max for scripts (log only, NOT a cost measure — 2026-08-04)
 - `[ ]` **Move script/description LLM to a Claude Max subscription instead of API — tidiness, not savings.**
   Be honest about the size: the TEXT LLM is not the cost centre. Scripts+description are ~£0.008/film

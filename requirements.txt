@@ -1,0 +1,12 @@
+# YouTube Agent — pinned runtime dependencies (Mac dev venv, 2026-08-04).
+# Underpins `scripts/health.py` reproducibility and future CI. FFmpeg is a system binary (Homebrew),
+# not a pip dep. Regenerate with: ./.venv/bin/pip freeze | grep -iE '<the names below>'.
+anthropic==0.116.0
+google-api-python-client==2.198.0
+google-auth==2.55.2
+google-auth-oauthlib==1.4.0
+httpx==0.28.1
+pillow==12.2.0
+psycopg[binary]==3.2.9
+python-dotenv==1.2.2
+python-telegram-bot==22.8

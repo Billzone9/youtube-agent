@@ -10,6 +10,11 @@ When unsure, STOP and ask Banks rather than guess.
 Banks is the creative director with final approval over everything that publishes or spends. He is a
 careful beginner: explain clearly, give copy-paste commands, go step by step.
 
+**Roles (standing discipline).** Claude (the reviewer) does not dictate direction — its role is
+corrections, reviews, and recommendations. Claude Code is the engineer and decides how to approach and
+order the build. Work is handed to Claude Code to evaluate and plan itself, not presented to Banks as a
+menu of directions chosen by the reviewer. **Banks approves; Claude Code plans; Claude reviews.**
+
 ---
 
 ## What you are building — READ THIS FIRST

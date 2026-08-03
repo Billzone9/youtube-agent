@@ -15,8 +15,9 @@ from psycopg.rows import dict_row
 from ytagent import repo
 from ytagent.budget import budget_status
 from ytagent.config import load_settings
+from ytagent.tts import get_tts_provider
 
-_FILMS_PER_MONTH = 8.67          # 2/week × 52/12
+_FILMS_PER_MONTH = 8.67          # 2/week × 52/12 — the TARGET cadence (not necessarily sustainable)
 # Music rate: the GATE uses 15.0 cr/s (erring high is correct for a gate). The ONLY reference for actual
 # cost is the lion — but that 1,500-credit figure is a HAND-SEEDED estimate (seed.py: "~1,500 credits"),
 # NOT a precise per-call settlement, so 1,500/120.06s ≈ 12.5 carries more precision than it earned. Treat
@@ -26,9 +27,9 @@ _FILMS_PER_MONTH = 8.67          # 2/week × 52/12
 _GATE_MUSIC_CR_PER_S = 15.0
 _REF_MUSIC_CR_PER_S = 12.5       # ≈, from one hand-seeded reference (the lion) — NOT a settled measurement
 _SETTLE = _REF_MUSIC_CR_PER_S / _GATE_MUSIC_CR_PER_S         # scale ledgered (15/s) music to the reference
-# ElevenLabs plan (verified via /v1/user/subscription, 2026-08). Update if the plan changes.
+# ElevenLabs plan. tier + overage read from the API; RECURRING allowance is an inference (config); the
+# AVAILABLE-now credit_limit (base + rollover) is read LIVE — the two are kept strictly distinct.
 _EL_TIER = "starter"
-_EL_ALLOWANCE_CR = 53_599        # credits INCLUDED per month in the fixed subscription
 _EL_FIXED_GBP_MO = 5.0           # the monthly subscription (already ledgered as a fixed cost)
 _EL_OVERAGE = False              # starter can_extend=False → going over BLOCKS, it does NOT bill extra
 _NOTIONAL_GBP_PER_CR = 0.00133   # the codebase's PAYG credit valuation — NOT the starter effective rate
@@ -36,6 +37,20 @@ _NOTIONAL_GBP_PER_CR = 0.00133   # the codebase's PAYG credit valuation — NOT 
 
 def _g(x):
     return float(x or 0)
+
+
+def affordability(recurring_cr: int, available_now_cr, credits_per_film: float) -> dict:
+    """Cadence is computed off RECURRING (the sustainable number), never off available_now (which
+    includes one-off rollover). Kept a pure function so it is testable without a live API call."""
+    cpf = credits_per_film or 1.0
+    avail = available_now_cr if available_now_cr is not None else None
+    return {
+        "recurring_cr": recurring_cr,
+        "available_now_cr": avail,
+        "rollover_cr": max(0, (avail - recurring_cr)) if avail is not None else None,
+        "sustainable_films_pm": recurring_cr / cpf,               # ← RECURRING, the honest cadence
+        "available_films_this_month": (avail / cpf) if avail is not None else None,
+    }
 
 
 async def run():
@@ -62,33 +77,49 @@ async def run():
     ref, ref_gate = max(complete) if complete else (0.0, 0.0)      # notional per-film (settled + gate music)
     # credits/film from the reference film's ledgered £ (at the codebase PAYG rate) — the allowance currency
     ref_credits = (ref_gate / _NOTIONAL_GBP_PER_CR) if ref_gate else 0.0
-    fit = (_EL_ALLOWANCE_CR / ref_credits) if ref_credits else 0.0
+
+    # AVAILABLE-now (base + rollover) read LIVE; RECURRING allowance is the config inference. Kept distinct.
+    recurring = settings.elevenlabs_recurring_allowance_cr
+    tts = get_tts_provider(settings)
+    cs = await asyncio.to_thread(tts.credit_status, key_cap=settings.elevenlabs_key_credit_cap) if tts else None
+    available_now = cs.get("account_limit") if cs else None
+    aff = affordability(recurring, available_now, ref_credits)
 
     print("\n" + "=" * 74)
     print("CADENCE AFFORDABILITY — INCREMENTAL CASH (what you actually pay)")
     print("=" * 74)
-    print(f"  ElevenLabs plan: {_EL_TIER} — {_EL_ALLOWANCE_CR:,} credits/mo INCLUDED for "
+    print(f"  ElevenLabs plan: {_EL_TIER} — RECURRING allowance {recurring:,} credits/mo for "
           f"£{_EL_FIXED_GBP_MO:.0f}/mo fixed (already ledgered).")
+    print(f"    (recurring is an INFERENCE from published Starter pricing — unverified until the 27 Aug reset.)")
     print(f"  Overage: {'billed per credit' if _EL_OVERAGE else 'NONE — going over BLOCKS, it does not bill extra'}.")
-    print(f"  A film ≈ {ref_credits:,.0f} credits  →  ~{fit:.1f} films/mo fit INSIDE the allowance.")
-    print(f"  ► INCREMENTAL CASH PER FILM (inside allowance): £0.00  — the £{_EL_FIXED_GBP_MO:.0f}/mo is already spent,")
-    print(f"    unused allowance is otherwise wasted. Effective amortised cost if fully used: "
-          f"~£{_EL_FIXED_GBP_MO / fit:.2f}/film.")
-    over = _FILMS_PER_MONTH - fit
-    if over > 0:
-        print(f"  ► At 2 films/wk ({_FILMS_PER_MONTH:.1f}/mo) you EXCEED the allowance by ~{over:.1f} films/mo. Starter")
-        print(f"    can't overage → the real decision is a PLAN UPGRADE (a step in FIXED cost), not per-film spend.")
+    print(f"  A film ≈ {ref_credits:,.0f} credits.")
+    print(f"  ► SUSTAINABLE cadence (off RECURRING): ~{aff['sustainable_films_pm']:.1f} films/mo "
+          f"(~{aff['sustainable_films_pm'] / 4.33:.1f}/wk).")
+    if available_now is not None:
+        print(f"  ► AVAILABLE THIS MONTH (live character_limit): {available_now:,} cr "
+              f"→ ~{aff['available_films_this_month']:.1f} films this month.")
+        if aff["rollover_cr"] and aff["rollover_cr"] > 0:
+            print(f"    ⚠ {aff['rollover_cr']:,} of that is NON-RECURRING ROLLOVER (one-off surplus, not "
+                  f"next month's budget). Plan cadence on RECURRING, not this.")
     else:
-        print(f"  ► 2 films/wk ({_FILMS_PER_MONTH:.1f}/mo) fits inside the allowance → £0 incremental at cadence.")
+        print(f"  ► AVAILABLE THIS MONTH: live read unavailable — reporting recurring only.")
+    print(f"  ► INCREMENTAL CASH PER FILM (inside allowance): £0.00  — the £{_EL_FIXED_GBP_MO:.0f}/mo is "
+          f"already spent; effective amortised if fully used: "
+          f"~£{_EL_FIXED_GBP_MO / (aff['sustainable_films_pm'] or 1):.2f}/film.")
+    if _FILMS_PER_MONTH > aff["sustainable_films_pm"]:
+        print(f"  ► The 2-films/wk TARGET ({_FILMS_PER_MONTH:.1f}/mo) EXCEEDS the sustainable "
+              f"~{aff['sustainable_films_pm']:.1f}/mo. Starter can't overage → sustained 2/wk needs a PLAN "
+              f"CHANGE (fixed step), not per-film spend. Rollover can carry a short burst, not the cadence.")
 
     print("\n" + "-" * 74)
     print("NOTIONAL CREDIT VALUATION — for scaling BEYOND the plan, NOT current cash")
     print("-" * 74)
+    eff = _EL_FIXED_GBP_MO / recurring
     print(f"  per film at the codebase PAYG rate (£{_NOTIONAL_GBP_PER_CR}/cr): ~£{ref:.2f} "
           f"(gate rate £{ref_gate:.2f}); TTS settled, music provisional.")
-    print(f"  NB the starter EFFECTIVE rate is £{_EL_FIXED_GBP_MO:.0f}/{_EL_ALLOWANCE_CR:,} = "
-          f"£{_EL_FIXED_GBP_MO / _EL_ALLOWANCE_CR:.6f}/cr — ~{_NOTIONAL_GBP_PER_CR / (_EL_FIXED_GBP_MO / _EL_ALLOWANCE_CR):.0f}× "
-          f"below the notional. The £{ref:.2f} is what credits WOULD cost at PAYG, not what you pay now.")
+    print(f"  NB the starter EFFECTIVE rate (on RECURRING) is £{_EL_FIXED_GBP_MO:.0f}/{recurring:,} = "
+          f"£{eff:.6f}/cr — ~{_NOTIONAL_GBP_PER_CR / eff:.0f}× below the notional. "
+          f"The £{ref:.2f} is what credits WOULD cost at PAYG, not what you pay now.")
 
     print("\n" + "-" * 74)
     print("SPEND BUCKETS — a big total is mostly FIXED + CALIBRATION, not production")

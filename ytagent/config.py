@@ -23,6 +23,13 @@ def _require(name: str) -> str:
     return val
 
 
+# INFERENCE from published ElevenLabs Starter pricing (~30,000 credits/mo). NOT API-sourced and NOT a
+# verified fact: the /v1/user/subscription endpoint returns character_limit = recurring base + rollover,
+# never the recurring base alone. UNVERIFIED until the 27 Aug 2026 reset (see BACKLOG). Do not present
+# this as sourced. It is the ONLY thing carrying this uncertainty — keep the caveat if you touch it.
+_STARTER_RECURRING_ALLOWANCE_CR = 30_000
+
+
 @dataclass(frozen=True)
 class Settings:
     # Postgres
@@ -49,6 +56,9 @@ class Settings:
     # key's cap via any GET, so we mirror it here to PRE-CHECK the spend gate against remaining credits;
     # keep it in sync with the dashboard cap. When Banks raises the dashboard cap he raises this too.
     elevenlabs_key_credit_cap: int | None = 15000
+    # The RECURRING monthly credit allowance (an inference — see _STARTER_RECURRING_ALLOWANCE_CR). Used
+    # to compute SUSTAINABLE cadence; distinct from the live character_limit (which includes rollover).
+    elevenlabs_recurring_allowance_cr: int = _STARTER_RECURRING_ALLOWANCE_CR
     # Honest-baseline constants (the lion film's known costs; subscription/VPS supplied at seed time)
     lion_music_credits: int = 1500
     # Budget (global, month-1 tier) — seeded into platform_settings
@@ -75,6 +85,7 @@ class Settings:
             "pixabay_configured": bool(self.pixabay_api_key),
             "elevenlabs_configured": bool(self.elevenlabs_api_key),
             "elevenlabs_key_credit_cap": self.elevenlabs_key_credit_cap,
+            "elevenlabs_recurring_allowance_cr": self.elevenlabs_recurring_allowance_cr,
         }
 
 
@@ -96,4 +107,6 @@ def load_settings() -> Settings:
         elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY"),
         elevenlabs_key_credit_cap=(int(os.environ["ELEVENLABS_KEY_CREDIT_CAP"])
                                    if os.environ.get("ELEVENLABS_KEY_CREDIT_CAP") else 15000),
+        elevenlabs_recurring_allowance_cr=int(os.environ.get(
+            "ELEVENLABS_RECURRING_ALLOWANCE_CR", _STARTER_RECURRING_ALLOWANCE_CR)),
     )
