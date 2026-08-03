@@ -29,10 +29,16 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   narration path (multiplies TTS) and YouTube's MLA audio-track upload isn't a settled Data-API call
   (Studio-era), so a schema stub would be speculative. Reserve the audio-track axis only when the MLA
   upload mechanism is confirmed available programmatically.
-- `[ ]` **Social cross-posting (§14.7) — DEFERRED, gated on Shorts.** Corrected reason: the blocker is
-  NOT integration size — its value is almost entirely vertical short-form, so it has no payload until
-  native Shorts exist. **Revisit WITH Shorts, not separately** (same trigger). Assembly is already
-  9:16-capable; the unbuilt part is Shorts scheduling/scripting/upload.
+- `[~]` **Native Shorts — ACTIVE (arc slice M1), was deferred.** The A′ marketing arc (2026-08-04,
+  `PLAN_MARKETING_ARC.md`) makes credit-light Shorts the discovery centrepiece. Un-deferred: the old
+  "no-production-runs" block is about full ~6,850-credit FILMS; a credit-light Short is ~0–640 credits
+  (footage free + reused/light ambient bed + little/no TTS) and fits the current 5,684-credit window
+  ~9–11×, so it is executable NOW. Assembly 9:16 is already first-class; the build is Shorts
+  scripting/format + a Shorts density rule + the playbook format-mix + the Short publish path.
+- `[~]` **Social cross-posting (§14.7) — UNBLOCKED (arc slice M3), was "deferred, gated on Shorts".**
+  Its dependency (Shorts must exist) is satisfied by M1. No longer indefinitely deferred; sequenced
+  AFTER YouTube Shorts prove out (YouTube Shorts need no external integration; TikTok/Reels/FB each do).
+  Per-channel opt-in; YouTube stays primary. See `PLAN_MARKETING_ARC.md`.
 
 ## Marketing arc — carry-forward (small entries, fold into the arc plan; 2026-08-04)
 - `[ ]` **Plan cadence against ~4.4 films/month, NOT 2/week.** The ROI report shows sustainable cadence
