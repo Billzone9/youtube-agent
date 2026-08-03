@@ -137,3 +137,45 @@ async def totals_gbp(conn) -> dict:
     cur = await conn.execute("SELECT COALESCE(SUM(amount_gbp), 0) AS r FROM revenue_ledger")
     revenue = (await cur.fetchone())["r"]
     return {"cost_gbp": cost, "revenue_gbp": revenue, "net_gbp": revenue - cost}
+
+
+async def roi_breakdown(conn, *, month_only: bool = False) -> dict:
+    """Honest ROI buckets (B3 item 4). Separates FIXED infrastructure (capital cash vs amortised
+    accrual) from PRODUCTION spend from CALIBRATION/dev spend, so ROI is quoted against production, not
+    against seeded fixed cost. Buckets are derived by RULE so a future untagged row can't slip through:
+      fixed        = category IN ('infrastructure','subscription')
+      production   = ai_generation with a job_id OR context='production' (the lion score has no job)
+      calibration  = ai_generation, no job_id, not context='production'
+    Also returns per-film production cost by provider (the number that decides cadence affordability)."""
+    where_month = "AND period_month = date_trunc('month', now())::date" if month_only else ""
+
+    async def _one(sql, *a):
+        return (await (await conn.execute(sql, list(a))).fetchone())
+
+    fixed_cap = (await _one(
+        f"SELECT COALESCE(SUM(amount_gbp),0) v FROM cost_ledger WHERE category IN "
+        f"('infrastructure','subscription') AND is_amortised=false {where_month}"))["v"]
+    fixed_amort = (await _one(
+        f"SELECT COALESCE(SUM(amount_gbp),0) v FROM cost_ledger WHERE category IN "
+        f"('infrastructure','subscription') AND is_amortised=true {where_month}"))["v"]
+    production = (await _one(
+        f"SELECT COALESCE(SUM(amount_gbp),0) v FROM cost_ledger WHERE category='ai_generation' "
+        f"AND (job_id IS NOT NULL OR metadata->>'context'='production') {where_month}"))["v"]
+    calibration = (await _one(
+        f"SELECT COALESCE(SUM(amount_gbp),0) v FROM cost_ledger WHERE category='ai_generation' "
+        f"AND job_id IS NULL AND COALESCE(metadata->>'context','') <> 'production' {where_month}"))["v"]
+    revenue = (await _one("SELECT COALESCE(SUM(amount_gbp),0) v FROM revenue_ledger"))["v"]
+
+    per_film = await (await conn.execute(
+        "SELECT j.id, COALESCE(j.payload->>'topic', j.payload->>'title','?') film, j.status, "
+        "  COALESCE(SUM(cl.amount_gbp) FILTER (WHERE cl.provider='ElevenLabs TTS'),0) tts, "
+        "  COALESCE(SUM(cl.amount_gbp) FILTER (WHERE cl.provider='ElevenLabs Music'),0) music, "
+        "  COALESCE(SUM(cl.amount_gbp) FILTER (WHERE cl.provider='Anthropic'),0) llm, "
+        "  COALESCE(SUM(cl.amount_gbp),0) total "
+        "FROM cost_ledger cl JOIN jobs j ON j.id=cl.job_id "
+        "WHERE cl.category='ai_generation' AND (cl.job_id IS NOT NULL OR cl.metadata->>'context'='production') "
+        "GROUP BY j.id, film, j.status ORDER BY total DESC")).fetchall()
+
+    return {"fixed_capital_gbp": fixed_cap, "fixed_amortised_gbp": fixed_amort,
+            "production_gbp": production, "calibration_gbp": calibration, "revenue_gbp": revenue,
+            "per_film": [dict(r) for r in per_film]}
