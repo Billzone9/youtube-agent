@@ -57,6 +57,7 @@ class Deps:
     publisher: object
     chat_id: str
     description_exemplar: object = None
+    key_credit_cap: int | None = None
     now: datetime = None
     summary: dict = field(default_factory=lambda: {
         "resumed": [], "commissioned": [], "skipped_infeasible": [], "submitted": [],
@@ -237,7 +238,8 @@ async def _run_job(conn, pb, job, deps: Deps) -> str:
             chat_id=deps.chat_id, job=job,
             per_job_threshold_gbp=(None if (job.get("payload") or {}).get("spend_approved")
                                    else pb.get("per_job_threshold_gbp")),
-            enforce_ceiling=not (job.get("payload") or {}).get("spend_approved"))
+            enforce_ceiling=not (job.get("payload") or {}).get("spend_approved"),
+            key_credit_cap=deps.key_credit_cap)
         await _on_submitted(conn, pb, job, deps)
         return "submitted"
     except produce.SpendGatePause as e:
@@ -282,11 +284,18 @@ async def _on_submitted(conn, pb, job, deps: Deps) -> None:
 async def _on_spend_pause(conn, pb, job, e, deps: Deps) -> None:
     state = "paused_ceiling" if e.gate == "ceiling" else "paused_spend"
     await repo.playbooks.set_state(conn, pb["id"], state)
-    where = ("month-to-date + estimate would breach the £{:.0f} ceiling".format(e.limit)
-             if e.gate == "ceiling" else "estimate £{:.2f} exceeds the per-job £{:.2f} threshold".format(
-                 e.estimate, e.limit))
-    await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> job {job['id']} PAUSED for spend approval — "
-                       f"{where}. Approve to proceed (the job resumes without re-charging TTS/music).")
+    if e.gate == "credits":
+        # can't FUND the spend — name credits needed vs available so Banks raises the key cap BEFORE
+        # a half-produced film (job 276's lesson). Not a £ approval; it needs a cap raise then resume.
+        where = ("the ElevenLabs key can't fund this — needs {:.0f} credits but has only {:.0f}. Raise "
+                 "the key's cap (dashboard + ELEVENLABS_KEY_CREDIT_CAP), then resume".format(
+                     e.estimate, e.limit))
+    elif e.gate == "ceiling":
+        where = "month-to-date + estimate would breach the £{:.0f} ceiling".format(e.limit)
+    else:
+        where = "estimate £{:.2f} exceeds the per-job £{:.2f} threshold".format(e.estimate, e.limit)
+    await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> job {job['id']} PAUSED before spending — "
+                       f"{where}. The job resumes without re-charging voiced beats / generated music.")
     deps.summary["paused"].append(("spend", e.gate))
 
 

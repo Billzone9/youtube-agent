@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import httpx
 
+from ..httpx_error import raise_for_status_with_body
 from .base import Candidate, orientation_of
 
 _BASE = "https://pixabay.com/api/videos/"
@@ -50,7 +51,7 @@ class PixabayProvider:
             r = await client.get(_BASE, params=params)
         self._rate = {"remaining": r.headers.get("X-RateLimit-Remaining"),
                       "reset": r.headers.get("X-RateLimit-Reset")}
-        r.raise_for_status()
+        raise_for_status_with_body(r, "Pixabay search")
         out: list[Candidate] = []
         for h in r.json().get("hits", []):
             rendition = _pick_rendition(h.get("videos", {}), self._tw, self._th)

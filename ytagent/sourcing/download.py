@@ -8,6 +8,7 @@ import os
 
 import httpx
 
+from ..httpx_error import raise_for_status_with_body
 from .base import Candidate, SourcingError
 
 _TIMEOUT = httpx.Timeout(60.0, connect=15.0)
@@ -22,7 +23,9 @@ async def download(candidate: Candidate, dst_dir: str, *, ext: str = "mp4") -> s
     expected: int | None = None
     async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
         async with client.stream("GET", candidate.download_url) as resp:
-            resp.raise_for_status()
+            if not resp.is_success:                    # read the streamed body so the error carries it
+                await resp.aread()
+                raise_for_status_with_body(resp, f"download {candidate.source}:{candidate.asset_id}")
             cl = resp.headers.get("content-length")
             expected = int(cl) if cl and cl.isdigit() else None
             with open(tmp, "wb") as fh:

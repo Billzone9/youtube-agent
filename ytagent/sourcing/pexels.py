@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import httpx
 
+from ..httpx_error import raise_for_status_with_body
 from .base import Candidate
 
 _BASE = "https://api.pexels.com/videos"
@@ -57,7 +58,7 @@ class PexelsProvider:
             r = await client.get(f"{_BASE}/search", headers=self._headers(), params=params)
         self._rate = {"remaining": r.headers.get("X-Ratelimit-Remaining"),
                       "reset": r.headers.get("X-Ratelimit-Reset")}
-        r.raise_for_status()
+        raise_for_status_with_body(r, "Pexels search")
         out: list[Candidate] = []
         for v in r.json().get("videos", []):
             rendition = _pick_rendition(v.get("video_files", []), self._tw, self._th)

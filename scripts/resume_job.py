@@ -35,10 +35,23 @@ async def run():
     print(f"=== RESUME job {jid} from stage '{st.get('stage')}' — TTS+music reload (no re-charge) ===")
     notifier, bot = await _make_notifier(settings)
 
-    res = await produce.produce_video(
-        conn, notifier, channel=ch, topic=st.get("topic", "african elephant"), providers=[], tts=tts,
-        music=music, script_writer=None, llm_provider=llm, usage_sink=sink, description_exemplar=None,
-        publisher=DryRunPublisher(), chat_id=settings.chat_id, job=job)
+    try:
+        res = await produce.produce_video(
+            conn, notifier, channel=ch, topic=st.get("topic", "african elephant"), providers=[], tts=tts,
+            music=music, script_writer=None, llm_provider=llm, usage_sink=sink, description_exemplar=None,
+            publisher=DryRunPublisher(), chat_id=settings.chat_id, job=job,
+            key_credit_cap=settings.elevenlabs_key_credit_cap)
+    except produce.SpendGatePause as e:
+        if e.gate == "credits":
+            print(f"\n⏸️  PAUSED BEFORE SPENDING — needs {e.estimate:.0f} ElevenLabs credits, key has "
+                  f"{e.limit:.0f}. Raise the key's cap (dashboard + ELEVENLABS_KEY_CREDIT_CAP={settings.elevenlabs_key_credit_cap}) "
+                  f"by ~{e.estimate - e.limit:.0f}, then re-run. Nothing was spent; beats 1–2 stay voiced.")
+        else:
+            print(f"\n⏸️  PAUSED at the spend gate ({e.gate}): {e}")
+        if bot:
+            await bot.shutdown()
+        await conn.close()
+        return
 
     qc = res["result"].qc
     noise = res["result"].noise

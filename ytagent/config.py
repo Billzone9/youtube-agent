@@ -45,6 +45,10 @@ class Settings:
     pixabay_api_key: str | None = None
     # TTS narration (optional — no key/scope ⇒ TTS unavailable; the key is Music+TTS scoped)
     elevenlabs_api_key: str | None = None
+    # The ElevenLabs key's HARD credit cap (structural spend control). ElevenLabs does NOT expose a
+    # key's cap via any GET, so we mirror it here to PRE-CHECK the spend gate against remaining credits;
+    # keep it in sync with the dashboard cap. When Banks raises the dashboard cap he raises this too.
+    elevenlabs_key_credit_cap: int | None = 15000
     # Honest-baseline constants (the lion film's known costs; subscription/VPS supplied at seed time)
     lion_music_credits: int = 1500
     # Budget (global, month-1 tier) — seeded into platform_settings
@@ -70,6 +74,7 @@ class Settings:
             "pexels_configured": bool(self.pexels_api_key),
             "pixabay_configured": bool(self.pixabay_api_key),
             "elevenlabs_configured": bool(self.elevenlabs_api_key),
+            "elevenlabs_key_credit_cap": self.elevenlabs_key_credit_cap,
         }
 
 
@@ -89,4 +94,6 @@ def load_settings() -> Settings:
         pexels_api_key=os.environ.get("PEXELS_API_KEY"),
         pixabay_api_key=os.environ.get("PIXABAY_API_KEY"),
         elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY"),
+        elevenlabs_key_credit_cap=(int(os.environ["ELEVENLABS_KEY_CREDIT_CAP"])
+                                   if os.environ.get("ELEVENLABS_KEY_CREDIT_CAP") else 15000),
     )

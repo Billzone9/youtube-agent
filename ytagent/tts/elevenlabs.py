@@ -23,6 +23,26 @@ class ElevenLabsTTS:
     def name(self) -> str:
         return "elevenlabs"
 
+    def credit_status(self, *, key_cap: int | None = None) -> dict | None:
+        """Remaining credits the key can actually spend, for the pre-spend gate. The subscription
+        endpoint reports ACCOUNT usage/limit; a per-key cap (which ElevenLabs does NOT expose via GET)
+        is passed in from config and mirrored here — the binding limit is the smaller of the two.
+        Returns None on any failure so the gate degrades (never blocks production on an infra blip)."""
+        try:
+            with httpx.Client(timeout=_TIMEOUT) as client:
+                r = client.get("https://api.elevenlabs.io/v1/user/subscription",
+                               headers={"xi-api-key": self._key})
+            if r.status_code != 200:
+                return None
+            d = r.json()
+            used = int(d.get("character_count") or 0)
+            acct_limit = int(d.get("character_limit") or 0)
+            eff = min(acct_limit, key_cap) if key_cap else acct_limit
+            return {"used": used, "account_limit": acct_limit, "key_cap": key_cap,
+                    "effective_limit": eff, "remaining": max(0, eff - used)}
+        except Exception:  # noqa: BLE001 — a credit-check failure must not halt production
+            return None
+
     def synthesize(self, text: str, *, voice_id: str, dst: str, model: str) -> TTSResult:
         tmp = f"{dst}.part"
         headers = {"xi-api-key": self._key, "accept": "audio/mpeg", "content-type": "application/json"}

@@ -199,15 +199,20 @@ class YouTubePublisher:
 
 
 def _http_error(op: str, e: HttpError) -> RuntimeError:
-    reason = ""
+    # provider-error-standard.md: carry Google's OWN message + reason through; only ADD a hint, hedged.
+    reason, message = "", ""
     try:
         reason = e.error_details[0].get("reason", "") if e.error_details else ""
     except Exception:  # noqa: BLE001
         pass
+    try:
+        message = (e.reason or "") or str(e)
+    except Exception:  # noqa: BLE001
+        pass
+    base = f"YouTube {op} failed (HTTP {e.resp.status} {reason}): {message}".rstrip(": ").rstrip()
     if e.resp.status == 403 and reason in ("quotaExceeded", "dailyLimitExceeded"):
-        return RuntimeError("YouTube API quota exhausted — retry tomorrow")
+        return RuntimeError(f"{base} — API quota exhausted, retry tomorrow")
     if e.resp.status in (401, 403) and reason in ("insufficientPermissions", "forbidden", ""):
-        return RuntimeError(
-            f"YouTube {op} forbidden (HTTP {e.resp.status} {reason}) — the token may lack the "
-            "youtube.force-ssl scope; re-run `python -m ytagent.youtube_auth`")
-    return RuntimeError(f"YouTube {op} failed (HTTP {e.resp.status} {reason})")
+        return RuntimeError(f"{base} — the token may lack the youtube.force-ssl scope; re-run "
+                            "`python -m ytagent.youtube_auth`")
+    return RuntimeError(base)

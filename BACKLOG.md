@@ -36,9 +36,21 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   is already on disk — no re-charge.
 - `[x]` **Fixed: the runner's `blocked` path persisted no reason.** It only alerted Telegram, leaving
   `jobs.error` empty (which blinded the job-276 diagnosis). It now writes `str(e)` to `jobs.error`.
+- `[x]` **Credit gate at 4→5 (Banks, 2026-08-03): check CREDITS, not just pounds.** The old gate cleared
+  job 276 at £9.10 < £50 then ran out of credits mid-spend. `produce._credit_gate` now queries the
+  ElevenLabs key's remaining credits (subscription `character_count` + a config'd per-key cap
+  `ELEVENLABS_KEY_CREDIT_CAP`, since ElevenLabs exposes no per-key cap via GET) and compares against the
+  credits STILL to spend (unvoiced beats + ungenerated music; done stages don't re-charge). If short →
+  `SpendGatePause("credits")` BEFORE any spend, alert names needed vs available. Degrades (no block) if
+  the provider can't report. Tested 3 ways; sits beside the per-job + rolling-ceiling gates.
+- `[x]` **Provider-error doctrine + audit (Banks, 2026-08-03):** `provider-error-standard.md` — a client
+  that raises MUST carry the upstream message through, never substitute a guess. Audited: ElevenLabs
+  (fixed), Pexels/Pixabay/download (fixed — bare `raise_for_status()` dropped the body → now
+  `httpx_error.raise_for_status_with_body`), YouTube `_http_error` (fixed — carried only `reason`, now
+  carries Google's message + only ADDS the scope hint), Anthropic (OK — SDK carries the message).
 - `[ ]` **Per-stage timings still partial:** script 2.0 min, source 5.8 min (WARM — 29 of 42 verified
-  were cache hits; cold ≈ 30–40 min), TTS partial (2/6 beats), design/assemble/submit UNREACHED. A cap
-  raise + resume yields the missing design/assemble/submit numbers on the next run.
+  were cache hits; cold ≈ 30–40 min), TTS partial (2/6 beats), design/assemble/submit UNREACHED —
+  blocked by the key cap until raised. A cap raise + resume yields the missing numbers.
 
 ## Phase 0 polish (non-blocking)
 - `[ ]` Add more ocean clips to `~/youtube-agent/assets/clips/`, then rebuild for a longer loop

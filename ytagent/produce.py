@@ -76,18 +76,25 @@ class ProductionError(RuntimeError):
 
 
 class SpendGatePause(RuntimeError):
-    """The 4→5 spend gate would be crossed: either the per-job estimate exceeds the playbook threshold,
-    or month-to-date + this estimate would breach the global ceiling. The production PAUSES here (before
-    any real money) for Banks; the runner (6c) turns this into a playbook pause + alert."""
+    """The 4→5 spend gate would be crossed: the per-job estimate exceeds the playbook threshold, or
+    month-to-date + this estimate would breach the global ceiling, or the ElevenLabs key lacks the
+    CREDITS to fund the spend (the check that job 276 was missing — pounds cleared, credits didn't).
+    The production PAUSES here (before any real money) for Banks; the runner (6c) turns this into a
+    playbook pause + alert. `unit` is '£' for the pounds gates, ' credits' for the credits gate."""
 
-    def __init__(self, gate: str, estimate: float, *, limit: float, mtd: float | None = None) -> None:
-        self.gate = gate            # "per_job" | "ceiling"
-        self.estimate = estimate
-        self.limit = limit
+    def __init__(self, gate: str, estimate: float, *, limit: float, mtd: float | None = None,
+                 unit: str = "£") -> None:
+        self.gate = gate            # "per_job" | "ceiling" | "credits"
+        self.estimate = estimate    # £ (pounds gates) or credits still to spend (credits gate)
+        self.limit = limit          # £ threshold/ceiling, or credits the key actually has
         self.mtd = mtd
-        super().__init__(f"spend gate '{gate}': estimate £{estimate:.2f}"
-                         + (f" + month-to-date £{mtd:.2f}" if mtd is not None else "")
-                         + f" vs limit £{limit:.2f}")
+        self.unit = unit
+        if unit == "£":
+            super().__init__(f"spend gate '{gate}': estimate £{estimate:.2f}"
+                             + (f" + month-to-date £{mtd:.2f}" if mtd is not None else "")
+                             + f" vs limit £{limit:.2f}")
+        else:
+            super().__init__(f"spend gate '{gate}': needs {estimate:.0f} credits vs {limit:.0f} available")
 
 
 class _CrashInjected(RuntimeError):
@@ -490,12 +497,16 @@ async def _st_source(conn, state, *, providers, llm, channel, script):
     return sourced
 
 
-async def _spend_gate(conn, state, script, *, per_job_threshold_gbp, enforce_ceiling, channel):
+async def _spend_gate(conn, state, script, *, tts=None, per_job_threshold_gbp, enforce_ceiling, channel,
+                      key_credit_cap=None):
     est = estimate_production_cost(script, channel)
     state["estimate_gbp"] = est.total_gbp
     await record_event(conn, "spend_estimate",
                        message=f"est £{est.total_gbp:.2f} (tts £{est.tts_gbp:.2f} + music £{est.music_gbp:.2f})",
                        channel_id=state["channel_id"], job_id=state["job_id"], data=asdict(est))
+    # CREDITS gate FIRST — a spend we can't FUND must never clear on a pounds check alone (job 276's
+    # gap: £9.10 < £50 cleared, then the key's 684 credits couldn't fund the ~4,989 needed).
+    await _credit_gate(conn, state, script, tts=tts, est=est, key_credit_cap=key_credit_cap)
     if per_job_threshold_gbp is not None and est.total_gbp > float(per_job_threshold_gbp):
         raise SpendGatePause("per_job", est.total_gbp, limit=float(per_job_threshold_gbp))
     if enforce_ceiling:
@@ -503,6 +514,36 @@ async def _spend_gate(conn, state, script, *, per_job_threshold_gbp, enforce_cei
         mtd, ceil = float(bud["month_spend_gbp"]), float(bud["ceiling_gbp"])
         if mtd + est.total_gbp > ceil:
             raise SpendGatePause("ceiling", est.total_gbp, limit=ceil, mtd=mtd)
+
+
+async def _credit_gate(conn, state, script, *, tts, est, key_credit_cap):
+    """Compare the ElevenLabs credits STILL TO SPEND (unvoiced beats + ungenerated music — already-done
+    stages never re-charge) against what the key can actually fund. PAUSE before any spend if short, so
+    Banks raises the cap BEFORE a half-produced film, not after. Degrades silently if the provider can't
+    report credits (the mid-run TTSQuotaError fail-fast is the backstop)."""
+    status_fn = getattr(tts, "credit_status", None)
+    if status_fn is None:
+        return
+    cs = await asyncio.to_thread(status_fn, key_cap=key_credit_cap)
+    if cs is None:                       # provider/network couldn't report — don't block on infra
+        await record_event(conn, "credit_check_skipped", message="ElevenLabs credit status unavailable",
+                           channel_id=state["channel_id"], job_id=state["job_id"])
+        return
+    workdir = state["workdir"]
+    rem_tts = sum(len(b.vo or "") for b in script.beats
+                  if (b.vo or "").strip() and not os.path.exists(
+                      os.path.join(workdir, f"narr_beat{b.index}.mp3")))
+    music_done = bool(state.get("design")) or _design_files_exist(os.path.join(workdir, "audio"))
+    rem_music = 0 if music_done else est.music_credits
+    needed, avail = rem_tts + rem_music, cs["remaining"]
+    await record_event(conn, "credit_check",
+                       message=f"need {needed} credits (tts {rem_tts} + music {rem_music}); key has {avail}",
+                       channel_id=state["channel_id"], job_id=state["job_id"],
+                       data={"needed": needed, "available": avail, "tts": rem_tts, "music": rem_music,
+                             "key_cap": cs.get("key_cap"), "used": cs.get("used"),
+                             "account_limit": cs.get("account_limit")})
+    if avail < needed:
+        raise SpendGatePause("credits", float(needed), limit=float(avail), unit=" credits")
 
 
 async def _st_tts(conn, state, *, tts, channel, script):
@@ -543,7 +584,8 @@ async def _st_design(conn, state, *, music, channel, script):
 
 async def run_production(conn, notifier, *, job, channel, providers, tts, music, llm_provider,
                          script_writer, usage_sink, description_exemplar, publisher, chat_id,
-                         per_job_threshold_gbp=None, enforce_ceiling=False, crash_after=frozenset()) -> dict:
+                         per_job_threshold_gbp=None, enforce_ceiling=False, key_credit_cap=None,
+                         crash_after=frozenset()) -> dict:
     """Drive a production job through the checkpointed stages, resuming from wherever it left off. Money
     stages reload their artifacts on resume (never re-charge). `crash_after` is TEST-ONLY. A SpendGatePause
     (4→5 gate) or _CrashInjected propagates WITHOUT marking the job failed — the state is preserved for a
@@ -567,8 +609,9 @@ async def run_production(conn, notifier, *, job, channel, providers, tts, music,
             await _maybe_checkpoint(conn, state, "sourced", crash_after)
 
         if _before(done, "narrated"):                                 # SPEND GATE (4→5) — only pre-spend
-            await _spend_gate(conn, state, script, per_job_threshold_gbp=per_job_threshold_gbp,
-                              enforce_ceiling=enforce_ceiling, channel=channel)
+            await _spend_gate(conn, state, script, tts=tts, per_job_threshold_gbp=per_job_threshold_gbp,
+                              enforce_ceiling=enforce_ceiling, channel=channel,
+                              key_credit_cap=key_credit_cap)
 
         narration = await _st_tts(conn, state, tts=tts, channel=channel, script=script)
         if _before(done, "narrated"):
@@ -613,7 +656,8 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
                         workdir=None, runtime_target_s=150, n_beats=4, cache_dir="assets/sourced",
                         target_fmt="16:9", target_w=1920, target_h=1080, music=None,
                         budget_credits=4000, sfx_specs=None, per_job_threshold_gbp=None,
-                        enforce_ceiling=False, crash_after=frozenset(), job=None) -> dict:
+                        enforce_ceiling=False, key_credit_cap=None, crash_after=frozenset(),
+                        job=None) -> dict:
     """Produce ONE video end to end via the resumable state machine. Thin wrapper: create (or reuse) the
     job, then `run_production`. Passing `job` resumes an existing production from its checkpoint. dst/
     workdir default to a stable job-keyed root so a resume finds the artifacts; callers may override."""
@@ -639,7 +683,7 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
         llm_provider=llm_provider, script_writer=script_writer, usage_sink=usage_sink,
         description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id,
         per_job_threshold_gbp=per_job_threshold_gbp, enforce_ceiling=enforce_ceiling,
-        crash_after=crash_after)
+        key_credit_cap=key_credit_cap, crash_after=crash_after)
 
 
 async def produce_from_sourced(conn, notifier, *, channel, topic, script, sourced, tts, music,
