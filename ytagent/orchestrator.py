@@ -205,6 +205,53 @@ async def submit_video_for_approval(
     return {"job": job, "video": video, "approval": approval, "message_id": message_id, "budget": budget}
 
 
+def _format_spend_text(channel: dict, gate: str, estimate: float, limit: float, unit: str,
+                       mtd, breakdown: dict) -> str:
+    """The spend-approval card: WHY it paused + the per-provider breakdown, so Banks decides with the
+    numbers in front of him (B3 item 3). Approve resumes without re-charging done stages; reject holds."""
+    if gate == "credits":
+        why = (f"ElevenLabs key can't fund this: needs <b>{estimate:.0f}</b> credits, "
+               f"has <b>{limit:.0f}</b>. Raise the cap (dashboard + ELEVENLABS_KEY_CREDIT_CAP).")
+    elif gate == "ceiling":
+        why = (f"month-to-date £{(mtd or 0):.2f} + est £{estimate:.2f} would breach the "
+               f"£{limit:.0f} monthly ceiling.")
+    else:
+        why = f"estimate £{estimate:.2f} exceeds the per-job £{limit:.2f} threshold."
+    lines = [f"⏸️ <b>{channel['name']} — spend approval</b>", why, ""]
+    tts_c = breakdown.get("tts_chars", 0)
+    mus_c = breakdown.get("music_credits", 0)
+    sfx_c = breakdown.get("sfx_credits", 0)
+    lines.append(f"<b>Estimate</b> £{breakdown.get('total_gbp', 0):.2f}  "
+                 f"({tts_c + mus_c + sfx_c:.0f} EL credits)")
+    lines.append(f"• TTS: £{breakdown.get('tts_gbp', 0):.2f} ({tts_c:.0f} cr)")
+    lines.append(f"• Music+SFX: £{breakdown.get('music_gbp', 0) + breakdown.get('sfx_gbp', 0):.2f} "
+                 f"({mus_c + sfx_c:.0f} cr)")
+    lines.append(f"• LLM (description): £{breakdown.get('llm_gbp', 0):.2f}")
+    lines.append("\nApprove to resume (no re-charge of voiced beats / generated music) · Reject to hold.")
+    return "\n".join(lines)
+
+
+async def submit_spend_for_approval(
+    conn, notifier: "Notifier", *, channel: dict, job: dict, gate: str, estimate: float, limit: float,
+    unit: str = "£", mtd=None, breakdown: dict | None = None, chat_id: str,
+) -> dict:
+    """Open the HUMAN spend gate on Telegram for a PAUSED production (B3 item 3). Creates a 'spend'
+    approval on the existing job and sends the inline Approve/Reject card with the breakdown; the
+    callback routes through handle_decision (kind='spend') → approve_spend on approve."""
+    async with conn.transaction():
+        approval = await repo.approvals.create(
+            conn, channel_id=channel["id"], job_id=job["id"], kind="spend", telegram_chat_id=chat_id)
+        await record_event(
+            conn, "spend_approval_requested", message=f"spend gate '{gate}' — awaiting Banks",
+            channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+            data={"gate": gate, "estimate": estimate, "limit": limit, "unit": unit})
+    text = _format_spend_text(channel, gate, estimate, limit, unit, mtd, breakdown or {})
+    message_id = await notifier.send_approval_request(chat_id=chat_id, text=text, approval_id=approval["id"])
+    async with conn.transaction():
+        approval = await repo.approvals.set_message_id(conn, approval["id"], message_id)
+    return {"approval": approval, "message_id": message_id}
+
+
 async def handle_decision(
     conn, notifier: "Notifier", publisher: "Publisher", *, approval_id: int, decision: str,
     decided_by: str,
@@ -218,30 +265,55 @@ async def handle_decision(
             return {"handled": False, "reason": "already_decided_or_missing", "approval_id": approval_id}
         job = await repo.jobs.get(conn, approval["job_id"])
         channel = await repo.channels.get_by_id(conn, approval["channel_id"])
+        await record_event(
+            conn, f"approval_{state}", message=f"spend approval {state} by {decided_by}",
+            channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+        ) if approval["kind"] == "spend" else None
+        # SPEND gate (B3 item 3) — NOT a publish; approve un-gates the paused production, reject keeps it
+        # paused. Handled here and returned before any publish/video logic (a paused job has no video).
+        if approval["kind"] == "spend":
+            if decision == "approve":
+                from .scheduler.runner import approve_spend
+                await approve_spend(conn, job["id"])   # flag spend_approved + playbook→producing (resumes next tick)
+            spend_ctx = {"chat_id": approval.get("telegram_chat_id"),
+                         "msg_id": approval.get("telegram_message_id"), "job_id": job["id"]}
+        else:
+            spend_ctx = None
         payload = job.get("payload") or {}
         is_publish = job.get("type") == "publish_public"
-        # publish_public acts on an EXISTING uploaded video (by payload id); upload uses the job's video.
-        video = (await repo.videos.get(conn, payload["video_id"]) if is_publish
-                 else await repo.videos.get_by_job(conn, approval["job_id"]))
-        await record_event(
-            conn, f"approval_{state}", message=f"approval {state} by {decided_by}",
-            channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
-        )
-        if decision == "reject":
-            await repo.jobs.set_status(conn, job["id"], "rejected")
-            await repo.videos.set_status(conn, video["id"], "rejected" if not is_publish else video["status"])
-        else:
-            await repo.jobs.set_status(conn, job["id"], "running")
-            await repo.videos.set_status(conn, video["id"], "publishing" if is_publish else "uploading")
+        if spend_ctx is None:
+            # publish_public acts on an EXISTING uploaded video (by payload id); upload uses the job's video.
+            video = (await repo.videos.get(conn, payload["video_id"]) if is_publish
+                     else await repo.videos.get_by_job(conn, approval["job_id"]))
             await record_event(
-                conn, "upload_started",
-                message=f"{publisher.mode} {'publish-to-public' if is_publish else 'upload'} started",
+                conn, f"approval_{state}", message=f"approval {state} by {decided_by}",
                 channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
-                data={"mode": publisher.mode, "action": job.get("type")},
             )
+            if decision == "reject":
+                await repo.jobs.set_status(conn, job["id"], "rejected")
+                await repo.videos.set_status(conn, video["id"], "rejected" if not is_publish else video["status"])
+            else:
+                await repo.jobs.set_status(conn, job["id"], "running")
+                await repo.videos.set_status(conn, video["id"], "publishing" if is_publish else "uploading")
+                await record_event(
+                    conn, "upload_started",
+                    message=f"{publisher.mode} {'publish-to-public' if is_publish else 'upload'} started",
+                    channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+                    data={"mode": publisher.mode, "action": job.get("type")},
+                )
 
     chat_id = approval.get("telegram_chat_id")
     msg_id = approval.get("telegram_message_id")
+
+    # SPEND decision resolves here — update the card and return (no publish, no video)
+    if spend_ctx is not None:
+        if msg_id:
+            resolved = (f"✅ <b>Spend approved</b> by {decided_by} — job {job['id']} resumes on the next "
+                        f"tick (no re-charge of voiced beats / generated music)."
+                        if decision == "approve" else
+                        f"❌ <b>Spend rejected</b> by {decided_by} — job {job['id']} stays paused; nothing spent.")
+            await notifier.update_resolved(chat_id=chat_id, message_id=msg_id, text=resolved)
+        return {"handled": True, "decision": decision, "job_id": job["id"], "kind": "spend"}
 
     if decision == "reject":
         if msg_id:

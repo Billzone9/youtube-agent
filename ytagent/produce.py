@@ -83,12 +83,13 @@ class SpendGatePause(RuntimeError):
     playbook pause + alert. `unit` is '£' for the pounds gates, ' credits' for the credits gate."""
 
     def __init__(self, gate: str, estimate: float, *, limit: float, mtd: float | None = None,
-                 unit: str = "£") -> None:
+                 unit: str = "£", breakdown: dict | None = None) -> None:
         self.gate = gate            # "per_job" | "ceiling" | "credits"
         self.estimate = estimate    # £ (pounds gates) or credits still to spend (credits gate)
         self.limit = limit          # £ threshold/ceiling, or credits the key actually has
         self.mtd = mtd
         self.unit = unit
+        self.breakdown = breakdown or {}   # per-provider CostEstimate (asdict) for the approval card
         if unit == "£":
             super().__init__(f"spend gate '{gate}': estimate £{estimate:.2f}"
                              + (f" + month-to-date £{mtd:.2f}" if mtd is not None else "")
@@ -510,13 +511,14 @@ async def _spend_gate(conn, state, script, *, tts=None, per_job_threshold_gbp, e
     # CREDITS gate FIRST — a spend we can't FUND must never clear on a pounds check alone (job 276's
     # gap: £9.10 < £50 cleared, then the key's 684 credits couldn't fund the ~4,989 needed).
     await _credit_gate(conn, state, script, tts=tts, est=est, key_credit_cap=key_credit_cap)
+    bd = asdict(est)
     if per_job_threshold_gbp is not None and est.total_gbp > float(per_job_threshold_gbp):
-        raise SpendGatePause("per_job", est.total_gbp, limit=float(per_job_threshold_gbp))
+        raise SpendGatePause("per_job", est.total_gbp, limit=float(per_job_threshold_gbp), breakdown=bd)
     if enforce_ceiling:
         bud = await budget_status(conn)
         mtd, ceil = float(bud["month_spend_gbp"]), float(bud["ceiling_gbp"])
         if mtd + est.total_gbp > ceil:
-            raise SpendGatePause("ceiling", est.total_gbp, limit=ceil, mtd=mtd)
+            raise SpendGatePause("ceiling", est.total_gbp, limit=ceil, mtd=mtd, breakdown=bd)
 
 
 async def _credit_gate(conn, state, script, *, tts, est, key_credit_cap):
@@ -546,7 +548,8 @@ async def _credit_gate(conn, state, script, *, tts, est, key_credit_cap):
                              "key_cap": cs.get("key_cap"), "used": cs.get("used"),
                              "account_limit": cs.get("account_limit")})
     if avail < needed:
-        raise SpendGatePause("credits", float(needed), limit=float(avail), unit=" credits")
+        raise SpendGatePause("credits", float(needed), limit=float(avail), unit=" credits",
+                             breakdown={**asdict(est), "rem_tts": rem_tts, "rem_music": rem_music})
 
 
 async def _st_tts(conn, state, *, tts, channel, script):

@@ -284,18 +284,19 @@ async def _on_submitted(conn, pb, job, deps: Deps) -> None:
 async def _on_spend_pause(conn, pb, job, e, deps: Deps) -> None:
     state = "paused_ceiling" if e.gate == "ceiling" else "paused_spend"
     await repo.playbooks.set_state(conn, pb["id"], state)
-    if e.gate == "credits":
-        # can't FUND the spend — name credits needed vs available so Banks raises the key cap BEFORE
-        # a half-produced film (job 276's lesson). Not a £ approval; it needs a cap raise then resume.
-        where = ("the ElevenLabs key can't fund this — needs {:.0f} credits but has only {:.0f}. Raise "
-                 "the key's cap (dashboard + ELEVENLABS_KEY_CREDIT_CAP), then resume".format(
-                     e.estimate, e.limit))
-    elif e.gate == "ceiling":
-        where = "month-to-date + estimate would breach the £{:.0f} ceiling".format(e.limit)
-    else:
-        where = "estimate £{:.2f} exceeds the per-job £{:.2f} threshold".format(e.estimate, e.limit)
-    await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> job {job['id']} PAUSED before spending — "
-                       f"{where}. The job resumes without re-charging voiced beats / generated music.")
+    # BLOCK + ASK (B3 item 3): send an inline Approve/Reject CARD with the breakdown, not a plain alert.
+    # The callback routes through handle_decision (kind='spend') → approve_spend, which resumes on the
+    # next tick without re-charging. Credits gate: approving alone won't help until the cap is raised, but
+    # the card carries the exact shortfall + the action.
+    try:
+        from ..orchestrator import submit_spend_for_approval
+        await submit_spend_for_approval(
+            conn, deps.notifier, channel=deps.channel, job=job, gate=e.gate, estimate=e.estimate,
+            limit=e.limit, unit=getattr(e, "unit", "£"), mtd=getattr(e, "mtd", None),
+            breakdown=getattr(e, "breakdown", {}), chat_id=deps.chat_id)
+    except Exception as ex:  # noqa: BLE001 — a card-send failure must not crash the tick; fall back to an alert
+        await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> job {job['id']} PAUSED (spend gate "
+                           f"'{e.gate}'); approval card failed to send: {ex}")
     deps.summary["paused"].append(("spend", e.gate))
 
 

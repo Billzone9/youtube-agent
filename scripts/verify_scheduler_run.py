@@ -34,9 +34,10 @@ def check(label, ok, detail=""):
 
 
 class _Notifier:
-    def __init__(self): self.msgs = []
+    def __init__(self): self.msgs = []; self.cards = []
     async def notify(self, *, chat_id, text): self.msgs.append(text)
-    async def send_approval_request(self, *, chat_id, text, approval_id): return 1
+    async def send_approval_request(self, *, chat_id, text, approval_id):
+        self.cards.append(text); return 1
     async def update_resolved(self, *, chat_id, message_id, text): pass
 
 
@@ -153,7 +154,12 @@ async def run():
         await tick(conn, _deps(ch, notif))
         check("per-job over threshold → paused_spend",
               (await repo.playbooks.get_by_channel(conn, cid))["state"] == "paused_spend")
-        check("spend alert sent", any("spend approval" in m.lower() or "PAUSED" in m for m in notif.msgs))
+        check("spend APPROVAL CARD sent (inline gate, not a plain alert)",
+              any("spend approval" in c.lower() for c in notif.cards))
+        spend_appr = await (await conn.execute(
+            "SELECT id, job_id FROM approvals WHERE channel_id=%s AND kind='spend' "
+            "ORDER BY id DESC LIMIT 1", [cid])).fetchone()
+        check("a 'spend' approval row exists for the paused job", spend_appr is not None)
 
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
         await _reset_pb(conn, cid, pool=["good3"])
@@ -208,6 +214,7 @@ async def run():
     finally:
         produce.produce_video = _orig_produce
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await conn.execute("DELETE FROM approvals WHERE channel_id=%s", [cid])   # spend cards FK jobs
         await conn.execute("DELETE FROM jobs WHERE channel_id=%s", [cid])
         await conn.execute("DELETE FROM playbooks WHERE channel_id=%s", [cid])
         await conn.execute("DELETE FROM channels WHERE id=%s", [cid])
