@@ -26,6 +26,12 @@ _FILMS_PER_MONTH = 8.67          # 2/week × 52/12
 _GATE_MUSIC_CR_PER_S = 15.0
 _REF_MUSIC_CR_PER_S = 12.5       # ≈, from one hand-seeded reference (the lion) — NOT a settled measurement
 _SETTLE = _REF_MUSIC_CR_PER_S / _GATE_MUSIC_CR_PER_S         # scale ledgered (15/s) music to the reference
+# ElevenLabs plan (verified via /v1/user/subscription, 2026-08). Update if the plan changes.
+_EL_TIER = "starter"
+_EL_ALLOWANCE_CR = 53_599        # credits INCLUDED per month in the fixed subscription
+_EL_FIXED_GBP_MO = 5.0           # the monthly subscription (already ledgered as a fixed cost)
+_EL_OVERAGE = False              # starter can_extend=False → going over BLOCKS, it does NOT bill extra
+_NOTIONAL_GBP_PER_CR = 0.00133   # the codebase's PAYG credit valuation — NOT the starter effective rate
 
 
 def _g(x):
@@ -53,20 +59,36 @@ async def run():
         print(f"  {r['id']:>4} {film:<24} {r['status']:<10} £{_g(r['tts']):>5.2f} "
               f"£{music_settled:>5.2f} £{_g(r['llm']):>5.3f} £{tot:>6.2f}")
 
-    ref, ref_gate = max(complete) if complete else (0.0, 0.0)      # settled headline + its gate-rate twin
+    ref, ref_gate = max(complete) if complete else (0.0, 0.0)      # notional per-film (settled + gate music)
+    # credits/film from the reference film's ledgered £ (at the codebase PAYG rate) — the allowance currency
+    ref_credits = (ref_gate / _NOTIONAL_GBP_PER_CR) if ref_gate else 0.0
+    fit = (_EL_ALLOWANCE_CR / ref_credits) if ref_credits else 0.0
+
+    print("\n" + "=" * 74)
+    print("CADENCE AFFORDABILITY — INCREMENTAL CASH (what you actually pay)")
+    print("=" * 74)
+    print(f"  ElevenLabs plan: {_EL_TIER} — {_EL_ALLOWANCE_CR:,} credits/mo INCLUDED for "
+          f"£{_EL_FIXED_GBP_MO:.0f}/mo fixed (already ledgered).")
+    print(f"  Overage: {'billed per credit' if _EL_OVERAGE else 'NONE — going over BLOCKS, it does not bill extra'}.")
+    print(f"  A film ≈ {ref_credits:,.0f} credits  →  ~{fit:.1f} films/mo fit INSIDE the allowance.")
+    print(f"  ► INCREMENTAL CASH PER FILM (inside allowance): £0.00  — the £{_EL_FIXED_GBP_MO:.0f}/mo is already spent,")
+    print(f"    unused allowance is otherwise wasted. Effective amortised cost if fully used: "
+          f"~£{_EL_FIXED_GBP_MO / fit:.2f}/film.")
+    over = _FILMS_PER_MONTH - fit
+    if over > 0:
+        print(f"  ► At 2 films/wk ({_FILMS_PER_MONTH:.1f}/mo) you EXCEED the allowance by ~{over:.1f} films/mo. Starter")
+        print(f"    can't overage → the real decision is a PLAN UPGRADE (a step in FIXED cost), not per-film spend.")
+    else:
+        print(f"  ► 2 films/wk ({_FILMS_PER_MONTH:.1f}/mo) fits inside the allowance → £0 incremental at cadence.")
+
     print("\n" + "-" * 74)
-    print("CADENCE AFFORDABILITY — ElevenLabs is the cost centre, not Anthropic")
+    print("NOTIONAL CREDIT VALUATION — for scaling BEYOND the plan, NOT current cash")
     print("-" * 74)
-    print(f"  reference COMPLETE film (~12-13 cr/s music)  : ~£{ref:.2f}  (≈99% ElevenLabs; music rate")
-    print(f"                                                 provisional — one hand-seeded reference)")
-    print(f"  same film at the GATE rate (15 cr/s, err-high): £{ref_gate:.2f}  ← what the spend gate quotes")
-    monthly = ref * _FILMS_PER_MONTH
-    ceiling = _g(bud["ceiling_gbp"])
-    print(f"  at 2 films/week  →  {_FILMS_PER_MONTH:.1f} films/mo × ~£{ref:.2f} = "
-          f"~£{monthly:.0f}/mo production; £{ref_gate * _FILMS_PER_MONTH:.0f}/mo at the gate rate")
-    head = ceiling - monthly
-    print(f"  vs £{ceiling:.0f} tier-1 ceiling  →  {'£%.0f headroom' % head if head >= 0 else 'OVER by £%.0f' % -head}"
-          f"  ({monthly/ceiling*100:.0f}% of ceiling on production alone)" if ceiling else "")
+    print(f"  per film at the codebase PAYG rate (£{_NOTIONAL_GBP_PER_CR}/cr): ~£{ref:.2f} "
+          f"(gate rate £{ref_gate:.2f}); TTS settled, music provisional.")
+    print(f"  NB the starter EFFECTIVE rate is £{_EL_FIXED_GBP_MO:.0f}/{_EL_ALLOWANCE_CR:,} = "
+          f"£{_EL_FIXED_GBP_MO / _EL_ALLOWANCE_CR:.6f}/cr — ~{_NOTIONAL_GBP_PER_CR / (_EL_FIXED_GBP_MO / _EL_ALLOWANCE_CR):.0f}× "
+          f"below the notional. The £{ref:.2f} is what credits WOULD cost at PAYG, not what you pay now.")
 
     print("\n" + "-" * 74)
     print("SPEND BUCKETS — a big total is mostly FIXED + CALIBRATION, not production")
