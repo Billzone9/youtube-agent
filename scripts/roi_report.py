@@ -17,12 +17,15 @@ from ytagent.budget import budget_status
 from ytagent.config import load_settings
 
 _FILMS_PER_MONTH = 8.67          # 2/week × 52/12
-# Music rate: the GATE uses 15.0 cr/s (erring high is correct for a gate). The only SETTLED evidence is
-# the lion — 1,500 credits for 120.06s of cues = 12.49 cr/s — so per-film COST is reported at 12.49.
-# Ledgered music £ is written at 15/s, so the honest cost is that × (12.49/15.0). Gate high, report honest.
+# Music rate: the GATE uses 15.0 cr/s (erring high is correct for a gate). The ONLY reference for actual
+# cost is the lion — but that 1,500-credit figure is a HAND-SEEDED estimate (seed.py: "~1,500 credits"),
+# NOT a precise per-call settlement, so 1,500/120.06s ≈ 12.5 carries more precision than it earned. Treat
+# it as ~12–13 cr/s from a SINGLE hand-seeded film: the direction is sound (15 over-estimates real cost)
+# but the exact figure is provisional until a real settlement replaces it. We use 12.5 as the point
+# estimate and label it approximate everywhere.
 _GATE_MUSIC_CR_PER_S = 15.0
-_SETTLED_MUSIC_CR_PER_S = 12.49
-_SETTLE = _SETTLED_MUSIC_CR_PER_S / _GATE_MUSIC_CR_PER_S     # 0.833 — scale ledgered (15/s) music to settled
+_REF_MUSIC_CR_PER_S = 12.5       # ≈, from one hand-seeded reference (the lion) — NOT a settled measurement
+_SETTLE = _REF_MUSIC_CR_PER_S / _GATE_MUSIC_CR_PER_S         # scale ledgered (15/s) music to the reference
 
 
 def _g(x):
@@ -36,7 +39,7 @@ async def run():
     bud = await budget_status(conn)
 
     print("=" * 74)
-    print("PER-FILM PRODUCTION COST — by provider, at the SETTLED music rate (12.49 cr/s)")
+    print("PER-FILM PRODUCTION COST — by provider, music at ~12-13 cr/s (1 hand-seeded reference)")
     print("=" * 74)
     print(f"  {'job':>4} {'film':<24} {'status':<10} {'TTS':>7} {'Music':>7} {'LLM':>7} {'TOTAL':>8}")
     complete = []
@@ -54,12 +57,13 @@ async def run():
     print("\n" + "-" * 74)
     print("CADENCE AFFORDABILITY — ElevenLabs is the cost centre, not Anthropic")
     print("-" * 74)
-    print(f"  reference COMPLETE film (settled 12.49 cr/s) : £{ref:.2f}  (≈99% ElevenLabs, LLM is pennies)")
+    print(f"  reference COMPLETE film (~12-13 cr/s music)  : ~£{ref:.2f}  (≈99% ElevenLabs; music rate")
+    print(f"                                                 provisional — one hand-seeded reference)")
     print(f"  same film at the GATE rate (15 cr/s, err-high): £{ref_gate:.2f}  ← what the spend gate quotes")
     monthly = ref * _FILMS_PER_MONTH
     ceiling = _g(bud["ceiling_gbp"])
-    print(f"  at 2 films/week  →  {_FILMS_PER_MONTH:.1f} films/mo × £{ref:.2f} = "
-          f"£{monthly:.0f}/mo production (honest); £{ref_gate * _FILMS_PER_MONTH:.0f}/mo at the gate rate")
+    print(f"  at 2 films/week  →  {_FILMS_PER_MONTH:.1f} films/mo × ~£{ref:.2f} = "
+          f"~£{monthly:.0f}/mo production; £{ref_gate * _FILMS_PER_MONTH:.0f}/mo at the gate rate")
     head = ceiling - monthly
     print(f"  vs £{ceiling:.0f} tier-1 ceiling  →  {'£%.0f headroom' % head if head >= 0 else 'OVER by £%.0f' % -head}"
           f"  ({monthly/ceiling*100:.0f}% of ceiling on production alone)" if ceiling else "")
@@ -93,9 +97,11 @@ async def run():
     print("    the live Anthropic USD balance, not the early GBP ledger sum. Post-0007 spend is exact.")
     print("  • ElevenLabs music/TTS rows are per-call ESTIMATES (reconciled=false) until settled; TTS is")
     print("    char-exact, music settles async. See estimate_vs_actual (shows UNSETTLED, not a fake ratio).")
-    print("  • MUSIC RATE: the gate uses 15.0 cr/s (err-high, correct for a gate); the only SETTLED datum")
-    print("    is the lion (1,500 cr / 120.06s = 12.49 cr/s). Per-film cost above is at 12.49; the ledgered")
-    print("    buckets (production/calibration) are at 15/s and settle ~17% lower once reconciled.")
+    print("  • MUSIC RATE is PROVISIONAL: the gate uses 15.0 cr/s (err-high, correct for a gate). The only")
+    print("    reference for real cost is the lion — but its 1,500 credits is a HAND-SEEDED estimate")
+    print("    (seed.py: '~1,500 credits'), not a per-call settlement, so ~12-13 cr/s is a direction, not")
+    print("    a measured figure. Per-film cost above uses ~12.5; a real music settlement (balance-delta,")
+    print("    once the cap allows a clean run) will replace it. Ledgered buckets are at 15/s.")
     await conn.close()
 
 
