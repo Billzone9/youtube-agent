@@ -14,6 +14,17 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 
 ---
 
+## Two minor items from the job-276 resume (log now, fix later — 2026-08-03)
+- `[ ]` **Music placeholder path when TTS resumes from cache.** When TTS reloads voiced beats from disk
+  on resume (per-beat idempotency), the design/music stage's reference to the narration can fall back to
+  a placeholder path rather than the reloaded mp3 in some resume orderings. Harmless in the runs seen but
+  worth tightening so the design stage always binds the reloaded narration, never a placeholder.
+- `[ ]` **Description regenerates (LLM spend) on every resume.** The metadata description is re-authored
+  each resume instead of being checkpointed like the money stages, so a resumed job pays LLM tokens
+  again for the same description. Checkpoint the authored description in `production_state` and reload it
+  on resume (mirror the TTS/music idempotency). Small spend, but it's the same class of leak B3 is
+  closing — fold into B3 or just after.
+
 ## KEY CAP HIT mid-production — the spend control worked; card BLOCKED on a human cap raise (2026-08-03)
 - `[~]` **The ElevenLabs key "Youtube Agent" has a hard 15,000-credit cap and is down to 686.** The
   supervised elephant run (job 276) got through script + source, voiced beats 1–2, then ElevenLabs
