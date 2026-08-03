@@ -16,6 +16,32 @@ def _slug(title: str) -> str:
     return (re.sub(r"[^a-z0-9]+", "-", (title or "video").lower()).strip("-") or "video")[:48]
 
 
+def bind_short_spec(clips, *, bed: str | None = None, duration_s: float = 30.0, title: str = "short",
+                    fmt: str = "9:16", fade_in: float = 0.4, fade_out: float = 0.6,
+                    bed_db: float = -24.0) -> EditSpec:
+    """Bind a CREDIT-LIGHT Short: 1–3 distinct sourced clips as ONE micro-cut beat (9:16), an ambient
+    bed under it, explicit duration, NO narration (footage + ambience — 0 TTS). `bed` should come from
+    `beds.pick_bed` (attested/claim-safe). The Shorts density gate (`short=True`) applies at assemble;
+    `duration_s` must be ≤ SHORTS_MAX_S (enforced there). A hook/voice variant is a later follow-up."""
+    from ..sourcing import to_clip                                # lazy: avoid the sourcing↔assembly cycle
+
+    tgt = (Target(fmt="9:16", w=1080, h=1920, fps=30) if fmt == "9:16"
+           else Target(fmt="16:9", w=1920, h=1080, fps=24))
+    assets = list(clips)
+    if not assets:
+        raise ValueError("a Short needs ≥1 clip")
+    built = []
+    for a in assets:
+        c = to_clip(a, approx_seconds=int(duration_s), cap=len(assets) == 1)
+        built.append(dc_replace(c, src=os.path.abspath(c.src)))
+    beat = Beat(name="short", clips=tuple(built), narration=None, duration=float(duration_s),
+                music=None, breather_s=0.0, out_transition=None)
+    mix = AudioMix(include_bed=bool(bed), bed=os.path.abspath(bed) if bed else None, bed_db=bed_db)
+    return EditSpec(id=_slug(title), source="clips", targets={tgt.fmt: tgt}, beats=(beat,),
+                    audio_mix=mix, sfx=(), title_card=None, fade_in=fade_in, fade_out=fade_out,
+                    assets_root="/", active_format=tgt.fmt)
+
+
 def bind_edit_spec(script, sourced: dict, narration: dict, *, target: Target | None = None,
                    fade_in: float = 1.5, fade_out: float = 2.0, cues: dict | None = None,
                    breathers: dict | None = None, bed: str | None = None,

@@ -95,6 +95,25 @@ def main():
         if len(beds) >= 2:
             check("pick_bed ROTATES (consecutive Shorts differ)", pick_bed(0) != pick_bed(1))
 
+    print("[5] bind_short_spec: a valid 9:16 single-beat Short (footage + attested bed, no narration)")
+    from ytagent.assembly.binder import bind_short_spec
+
+    def _asset(path, dur):
+        return SimpleNamespace(local_path=path, candidate=SimpleNamespace(duration=dur))
+    short = bind_short_spec([_asset("/tmp/clipA.mp4", 40.0)], bed="/tmp/bed.mp3", duration_s=45.0,
+                            title="wild-elephant-short")
+    check("target is 9:16 1080×1920", short.active_format == "9:16"
+          and short.targets["9:16"].w == 1080 and short.targets["9:16"].h == 1920)
+    check("source=clips, one beat, bed layered", short.source == "clips" and len(short.beats) == 1
+          and short.audio_mix.include_bed)
+    check("no narration (0 TTS) — explicit duration carried", short.beats[0].narration is None
+          and short.beats[0].duration == 45.0)
+    try:
+        assert_visual_density(short, short=True)
+        check("passes the Shorts density gate (1 held shot ≤60s)", True)
+    except VisualDensityError as e:
+        check("passes the Shorts density gate (1 held shot ≤60s)", False, str(e))
+
     print("[4] credit costing: reused bed ≈ 0, fresh 30s bed ≈ 520 (with retake headroom)")
     reused = 0
     generated_30s = 30 * _CREDITS_PER_SEC * 1.15
