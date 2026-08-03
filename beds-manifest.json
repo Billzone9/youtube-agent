@@ -1,0 +1,27 @@
+{
+  "_doc": "Claim-safety CONTROL + provenance record for the Shorts ambient bed library (assets/beds/, media gitignored). A bed is admissible ONLY if listed here with origin 'elevenlabs_generated' AND its bytes hash to the recorded sha256 (ytagent/assembly/beds.py enforces this). check_source_clean measures HISS, not ORIGIN — this manifest is what makes the beds claim-safe (own/generated, no Content ID even as a VOD). To add a bed: generate it via ElevenLabs Music, confirm check_source_clean PASSES, add an entry with its sha256 — a reviewed, committed act. A sourced/licensed track dropped into assets/beds/ has no matching attested entry and is structurally refused.",
+  "beds": [
+    {
+      "file": "bed-el-01.mp3",
+      "origin": "elevenlabs_generated",
+      "provider": "ElevenLabs Music",
+      "sha256": "0439af23d9fef32022e940649bedf376ce5ebb23227f5b16c8c6a2a1d96f5696",
+      "duration_s": 45.0,
+      "hi16k_db": -90.3,
+      "gate": "pass",
+      "added": "2026-08-04",
+      "note": "own/generated — from the elephant 'reuse-elephant' production bed cue"
+    },
+    {
+      "file": "bed-el-02.mp3",
+      "origin": "elevenlabs_generated",
+      "provider": "ElevenLabs Music",
+      "sha256": "dcabbbd7daa2ae1aa2248ecdec7e15646568f440cebd16574a2d6f786a3e4375",
+      "duration_s": 45.0,
+      "hi16k_db": -90.3,
+      "gate": "pass",
+      "added": "2026-08-04",
+      "note": "own/generated — from the elephant production bed cue"
+    }
+  ]
+}

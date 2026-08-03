@@ -27,6 +27,8 @@ LONG_HOLD_S = 15.0    # a shot longer than this is FLAGGED for review (soft) —
 #                       sustain the hold honestly (the lion's long holds were hand-cut, not static)
 _FLOOR_BEAT_S = 15.0  # a beat longer than this must have ≥2 clips — the HARD FLOOR (the wolf's failure)
 INTRA_XFADE = 0.6     # crossfade between shots within a beat (matches stage1.build_beat)
+SHORTS_MAX_S = 60.0   # `short=True` is ONLY valid up to this — enforced, so the relaxed floor can never
+#                       be applied to long-form (a 6-min film with short=True must FAIL, not bypass)
 
 
 class VisualDensityError(RuntimeError):
@@ -98,6 +100,14 @@ def assert_visual_density(spec, narration_s: dict | None = None, *, motif_srcs: 
     static hold is surfaced for the review gate (a Short wants movement, same as the lion's long holds)."""
     if spec.source != "clips":
         return {"skipped": f"source={spec.source!r} (prebaked beats are pre-cut)"}
+    if short:
+        # ENFORCE the ≤60s claim structurally — the relaxed floor must never reach long-form. A caller
+        # passing short=True on a multi-minute film FAILS here rather than silently disabling density.
+        total = sum(_length(spec, beat, narration_s) for beat in spec.beats)
+        if total > SHORTS_MAX_S:
+            raise VisualDensityError(
+                f"short=True on {total:.0f}s of content (> {SHORTS_MAX_S:.0f}s Shorts cap) — the relaxed "
+                f"Shorts density floor cannot be applied to long-form. Use short=False.")
     motif = motif_srcs or set()
     report, seen, long_holds = {}, {}, []
     for beat in spec.beats:
