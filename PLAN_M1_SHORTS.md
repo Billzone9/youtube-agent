@@ -94,9 +94,24 @@ discovery is proven (the success criterion) and/or tier B.** The M1 build target
   is **~£0.05–0.10 typical (stops at ~3 clear) and ≤~£0.34 worst-case — a fraction of the ~£0.72 film**
   (£0.72 ≈ 42 checks → ~£0.017/check; a Short is ~3–19 checks). The conductor sources a Short with
   `source_clips_for_brief(n_target=3, n_min=1)`, never `source_film`.
-- **LUFS is asserted, not watched (note 2):** the render/QC must fail a Short whose master drifts past
-  −14 ± 2 LUFS (proven in `prove_short_render`); below ~15s single-pass loudnorm's integrated measure is
-  untrustworthy → use dual-pass or a floor before shipping sub-15s Shorts.
+- **LUFS is asserted, not watched (note 2 earlier):** the render/QC must fail a Short whose master drifts
+  past −14 ± 2 LUFS (proven in `prove_short_render`); below ~15s single-pass loudnorm's integrated measure
+  is untrustworthy → use dual-pass or a floor before shipping sub-15s Shorts.
+- **CROSS-VIDEO no-reuse — FIXED (note 2, this round).** The density no-reuse rule was within-spec only,
+  so at Short volume (1–3 clips × 4/wk) the same striking clip could recur across Shorts. Now
+  `repo.sourcing.used_asset_ids(channel)` returns every clip the channel has used across prior videos
+  (from each non-failed job's allocation), and `_source_all_beats` seeds the exclude set with it — so NO
+  clip repeats across videos, films and Shorts alike. The Short conductor passes the same set as
+  `exclude_ids` to `source_clips_for_brief`. Proven live: channel 1 already excludes its 26 prior clips.
+- **VISION spend is the dominant per-unit Short cost — make it VISIBLE, not absorbed (note 1).** Vision
+  already lands in `cost_ledger` per-job (`_drain_llm` → `write_llm_cost(job_id)`), so a Short's ~£0.05–
+  0.10 shows in roi_report's per-job LLM column. Two additions so it isn't mis-shaped: (a) TAG the Short
+  produce job `format="short"` (payload + a metadata marker on the row) so roi_report / estimate_vs_actual
+  can separate Shorts from films — the cost ratio INVERTS (ElevenLabs ≈ £0, Anthropic dominant), and at
+  4/wk that's ~£3–5/mo of Anthropic that must be seen; (b) the cost ESTIMATOR needs a Short variant whose
+  dominant term is the VISION estimate (`n_target` × per-check), else a Short is estimated at the film's
+  fixed ~£0.02 LLM and estimate_vs_actual under-counts it ~4× — the exact error class the film estimator
+  once had. Both land with the conductor's job-creation + a small roi_report/estimator format-awareness.
 - **Publish** — `ytagent/youtube.py`: a Short is a <60s 9:16 upload with `#Shorts`; the existing
   `YouTubePublisher` insert path works with Shorts metadata + the AI-disclosure line + a cohort tag
   (metadata field) for the success measurement. Human-gated as always.

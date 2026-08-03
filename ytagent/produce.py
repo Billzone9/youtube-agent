@@ -150,7 +150,10 @@ async def curate_report(conn, providers, script, *, channel_id, job_id=None, llm
     accepted ids, and every vision verdict) WITHOUT assembling or raising. The no-repeat guard still
     holds across beats so the report reflects a real full source-set. `required_of(beat) -> frozenset`
     gives the per-beat blocking axes (the Amendment). Callers print it and STOP for Banks."""
-    report, used = [], set()
+    # Seed the no-repeat exclude set with clips this channel has ALREADY used in prior videos, so no clip
+    # repeats ACROSS videos — not just within this one (the density no-reuse rule is within-spec only; a
+    # real anti-templating hole at Short volume). Same mechanism serves films and Shorts.
+    report, used = [], await repo.sourcing.used_asset_ids(conn, channel_id)
     for b in script.beats:
         hint = length_of(b)
         n_min = min_clips(hint)
