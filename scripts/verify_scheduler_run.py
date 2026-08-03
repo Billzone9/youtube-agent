@@ -40,15 +40,20 @@ class _Notifier:
     async def update_resolved(self, *, chat_id, message_id, text): pass
 
 
-def _fake_report(verdict):
-    return SimpleNamespace(verdict=verdict, pool_depth=30,
+def _fake_report(verdict, E=30):
+    return SimpleNamespace(verdict=verdict, pool_depth=E,
                            season_dist={"dry": 10}, habitat_dist={"savanna/grassland": 12},
                            time_dist={"golden/dawn/dusk": 11}, shot_dist={"wide": 12})
 
 
 async def _fake_probe(conn, providers, subject, *, llm, channel_id, runtime_s, n_beats):
-    # 'bad*' subjects are INFEASIBLE; everything else FEASIBLE
-    return _fake_report("INFEASIBLE" if subject.startswith("bad") else "FEASIBLE")
+    # NEW GATE: only the pool-depth FLOOR skips. 'shallow*' → E<5 (skip); 'lowyield*' → deep pool but
+    # INFEASIBLE verdict (PROCEEDS — the verdict no longer gates); everything else → deep + FEASIBLE.
+    if subject.startswith("shallow"):
+        return _fake_report("INCONCLUSIVE-SHALLOW", E=2)
+    if subject.startswith("lowyield"):
+        return _fake_report("INFEASIBLE", E=30)
+    return _fake_report("FEASIBLE", E=30)
 
 
 def _mk_produce(mode="submit"):
@@ -67,7 +72,9 @@ def _mk_produce(mode="submit"):
         if mode == "transient":
             raise ConnectionError("temporary network blip")
         if mode == "sourcing":
-            raise produce.ProductionError("insufficient distinct footage")
+            err = produce.ProductionError("insufficient distinct footage — held 8 clear")
+            err.clear_count = 8
+            raise err
         raise AssertionError(mode)
     return _fake
 
@@ -110,17 +117,33 @@ async def run():
         check("per_week=2 → +3.5 days", next_run_from_cadence({"per_week": 2}, now) == now + timedelta(days=3.5))
         check("per_week=0 → None (no auto-cadence)", next_run_from_cadence({"per_week": 0}, now) is None)
 
-        print("[2] commission: infeasible subject SKIPPED (no ask), feasible one commissioned → submitted")
-        pb = await _mk_playbook(conn, ch, pool=["bad1", "good1"])
+        print("[2] gate redesign: pool-depth FLOOR skips E<5; the VERDICT no longer gates")
+        pb = await _mk_playbook(conn, ch, pool=["shallow1", "lowyield1"])
         produce.produce_video = _mk_produce("submit")
         notif = _Notifier()
         await tick(conn, _deps(ch, notif))
         subs = {r["subject"]: r["status"] for r in await repo.subjects.list_for_channel(conn, cid)}
-        check("infeasible 'bad1' recorded, not asked", subs.get("bad1") == "infeasible")
-        check("feasible 'good1' produced (reached the gate)", subs.get("good1") == "produced")
+        check("E<5 subject skipped on the pool-depth floor", subs.get("shallow1") == "infeasible")
+        check("INFEASIBLE-verdict but deep-pool subject PROCEEDS + produces (verdict no longer gates)",
+              subs.get("lowyield1") == "produced")
         pbx = await repo.playbooks.get_by_channel(conn, cid)
         check("playbook back to idle with next_run scheduled (cadence)",
               pbx["state"] == "idle" and pbx["next_run_at"] is not None, pbx["state"])
+
+        print("[2b] sourcing is the REAL gate: consecutive sourcing failures capped at 3 → pause")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["s1", "s2", "s3", "s4"])
+        produce.produce_video = _mk_produce("sourcing")
+        notif = _Notifier()
+        await tick(conn, _deps(ch, notif))
+        shorts = await (await conn.execute(
+            "SELECT subject, clear_count FROM channel_subjects WHERE channel_id=%s AND verdict='SOURCING_SHORT'",
+            [cid])).fetchall()
+        check("exactly 3 subjects failed at sourcing then it paused (4th not attempted)", len(shorts) == 3, str(len(shorts)))
+        check("each records the ACTUAL clear count (8), not the probe guess", all(r["clear_count"] == 8 for r in shorts))
+        check("paused_pool after 3 consecutive sourcing failures + alert",
+              (await repo.playbooks.get_by_channel(conn, cid))["state"] == "paused_pool"
+              and any("sourcing" in m.lower() for m in notif.msgs))
 
         print("[3] spend gate → playbook PAUSED + alert (per-job and ceiling)")
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])

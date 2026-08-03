@@ -92,11 +92,13 @@ async def _source_all_beats(conn, providers, script, *, channel_id, job_id, targ
     misses = [f"beat{br['beat']} ({br['verified']}/{br['n_min']})"
               for br in rep["beats"] if not br["reached_min"]]
     if misses:
-        raise ProductionError(
+        err = ProductionError(
             "insufficient distinct footage for: " + "; ".join(misses) + f" — the film pool held "
             f"{rep['clear']} clear clips ({rep['rejected']} rejected by the gate) across "
             f"{rep['pool_candidates']} candidates. Pick a better-covered subject or reshape those "
             "beats. No TTS spent.")
+        err.clear_count = rep["clear"]        # the ACTUAL yield — the scheduler records it as history
+        raise err
     await record_event(conn, "sourced",
                        message=f"{rep['allocated_total']} clips across {len(alloc)} beats "
                                f"(film pool {rep['clear']} clear of {rep['pool_candidates']})",

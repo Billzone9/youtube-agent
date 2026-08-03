@@ -19,13 +19,33 @@ async def record(conn, *, channel_id: int, subject: str, source: str = "pool",
 
 
 async def set_status(conn, subject_id: int, status: str, *, verdict: str | None = None,
-                     pool_depth: int | None = None, job_id: int | None = None) -> dict:
+                     pool_depth: int | None = None, job_id: int | None = None,
+                     clear_count: int | None = None) -> dict:
     cur = await conn.execute(
         "UPDATE channel_subjects SET status = %s, verdict = COALESCE(%s, verdict), "
-        "pool_depth = COALESCE(%s, pool_depth), job_id = COALESCE(%s, job_id) "
-        "WHERE id = %s RETURNING *",
-        [status, verdict, pool_depth, job_id, subject_id])
+        "pool_depth = COALESCE(%s, pool_depth), job_id = COALESCE(%s, job_id), "
+        "clear_count = COALESCE(%s, clear_count) WHERE id = %s RETURNING *",
+        [status, verdict, pool_depth, job_id, clear_count, subject_id])
     return await cur.fetchone()
+
+
+async def trailing_sourcing_failures(conn, channel_id: int, *, limit: int = 20) -> int:
+    """Consecutive most-recent SOURCING failures (verdict='SOURCING_SHORT') since the last SUCCESSFUL
+    commission (produced/selected). Drives the 6c consecutive-sourcing-failure cap. Cheap probe pool-
+    depth-floor skips and unresolved 'proposed' rows are TRANSPARENT (they are not expensive sourcing
+    passes); only a produced/selected outcome breaks the run."""
+    cur = await conn.execute(
+        "SELECT status, verdict FROM channel_subjects WHERE channel_id = %s "
+        "ORDER BY created_at DESC, id DESC LIMIT %s", [channel_id, limit])
+    n = 0
+    for r in await cur.fetchall():
+        if r["verdict"] == "SOURCING_SHORT":
+            n += 1
+        elif r["status"] in ("produced", "selected"):
+            break
+        else:
+            continue                      # probe-floor skip / proposed — transparent to the cap
+    return n
 
 
 async def used_subjects(conn, channel_id: int) -> set[str]:

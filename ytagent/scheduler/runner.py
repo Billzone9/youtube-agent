@@ -32,8 +32,14 @@ from .selection import next_subject
 
 _MAX_ATTEMPTS = 3            # transient retries before a job is failed
 _BACKOFF_BASE_S = 60         # transient backoff = base × 2^(attempt-1)
-_MAX_COMMISSION_TRIES = 6    # bound on the probe-reject loop per commission (the domain cap also bounds it)
-_VERDICT_RANK = {"INFEASIBLE": 0, "INCONCLUSIVE-SHALLOW": 0, "MARGINAL": 1, "FEASIBLE": 2}
+_MAX_COMMISSION_TRIES = 8    # bound on the pick loop per commission (the caps below are the real bounds)
+# GATE REDESIGN (2026-08-03): the probe VERDICT no longer gates commissioning — a 10-clip sample cannot
+# gate a decision (flamingo flipped MARGINAL→INFEASIBLE 15 min apart). Keep ONLY a pool-depth FLOOR (E
+# below this = genuinely nothing there, don't spend 30 min sourcing it); every other outcome proceeds to
+# a REAL film-wide source, which is now the feasibility gate. Consecutive SOURCING failures are capped
+# so a run of thin subjects can't burn hours.
+_MIN_POOL_DEPTH = 5          # E below this → skip on the probe alone (nothing to source)
+_SOURCING_FAIL_CAP = 3       # consecutive sourcing shortfalls before pausing (matches the domain cap)
 # failures that are DETERMINISTIC — same spec + clips → same result; retrying only burns compute to fail
 # identically. They fail ONCE, alert, and PRESERVE the spent assets for a Banks-fixed resume.
 _DETERMINISTIC = (AssemblyNoiseError, VisualDensityError, FFmpegError)
@@ -110,7 +116,10 @@ async def tick(conn, deps: Deps) -> dict:
         job = await _inflight_job(conn, pb, deps.now)
         if job:
             deps.summary["resumed"].append(job["id"])
-            await _run_job(conn, pb, job, deps)
+            outcome = await _run_job(conn, pb, job, deps)
+            if outcome == "sourcing_short":      # a resumed job's cached clips vanished → fail it, free the playbook
+                await conn.execute("UPDATE jobs SET status='failed' WHERE id=%s", [job["id"]])
+                await repo.playbooks.set_state(conn, pb["id"], "idle")
         else:                                    # 'producing' with no resumable job → return to idle
             await repo.playbooks.set_state(conn, pb["id"], "idle")
     # 2) commission due, idle playbooks
@@ -134,43 +143,62 @@ async def run_forever(conn, deps: Deps, *, interval_s: int = 30, max_ticks: int 
 
 
 # --- commissioning -----------------------------------------------------------------------------------
+async def _pause_pool(conn, pb, deps: Deps, reason: str) -> None:
+    await repo.playbooks.set_state(conn, pb["id"], "paused_pool")
+    await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> paused — {reason}. "
+                       "Add subjects to the pool / set a domain, then re-enable.")
+    deps.summary["paused"].append(("pool", reason))
+
+
 async def _commission(conn, pb, deps: Deps) -> None:
-    """Pick a subject → probe (verdict gate) → seed the distribution → run the production to the gate.
-    Rejects infeasible subjects and picks the next, bounded, without asking Banks."""
+    """Pick a subject → probe for the DISTRIBUTION (a pool-depth FLOOR is the only probe gate now) →
+    seed it → run a REAL production. Sourcing (not the verdict) is the feasibility gate; a sourcing
+    shortfall records the ACTUAL clear count and moves to the next subject, bounded by the consecutive-
+    sourcing-failure cap. No asks beyond the pause alert."""
     for _ in range(_MAX_COMMISSION_TRIES):
+        if await repo.subjects.trailing_sourcing_failures(conn, pb["channel_id"]) >= _SOURCING_FAIL_CAP:
+            await _pause_pool(conn, pb, deps, f"{_SOURCING_FAIL_CAP} consecutive subjects failed at "
+                                              "sourcing (real yield too thin)")
+            return
         pick = await next_subject(conn, pb, llm=deps.llm)
         if pick.subject is None:                 # pool exhausted / cap reached / needs LLM
-            await repo.playbooks.set_state(conn, pb["id"], "paused_pool")
-            await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> paused — no subject to commission "
-                               f"({pick.reason}). Add to the subject pool or set a domain.")
-            deps.summary["paused"].append(("pool", pick.reason))
+            await _pause_pool(conn, pb, deps, f"no subject to commission ({pick.reason})")
             return
         subj = await repo.subjects.record(conn, channel_id=pb["channel_id"], subject=pick.subject,
                                           source=pick.source, status="proposed")
         rep = await probe_feasibility(conn, deps.providers, pick.subject, llm=deps.llm,
                                       channel_id=pb["channel_id"], runtime_s=pb["runtime_target_s"],
                                       n_beats=pb["n_beats"])
-        if _VERDICT_RANK.get(rep.verdict, 0) < _VERDICT_RANK.get(pb["min_verdict"], 2):
+        # THE ONLY probe gate now: a genuine pool-depth floor. INCONCLUSIVE-SHALLOW with a reasonable E
+        # is a SEARCH-reach issue, not a subject issue, and proceeds; E below the floor = nothing there.
+        if (rep.pool_depth or 0) < _MIN_POOL_DEPTH:
             await repo.subjects.set_status(conn, subj["id"], "infeasible", verdict=rep.verdict,
                                            pool_depth=rep.pool_depth)
             await record_event(conn, "subject_rejected",
-                               message=f"'{pick.subject}' {rep.verdict} (E={rep.pool_depth}) < "
-                                       f"{pb['min_verdict']} — skipped, next subject",
+                               message=f"'{pick.subject}' E={rep.pool_depth} < floor {_MIN_POOL_DEPTH} "
+                                       f"({rep.verdict}) — genuinely no footage, skipped",
                                channel_id=pb["channel_id"])
-            deps.summary["skipped_infeasible"].append((pick.subject, rep.verdict))
-            continue                             # try the next subject, no ask
-        # FEASIBLE enough → commission it (seed the OBSERVED distribution — footage-led, no double-probe)
+            deps.summary["skipped_infeasible"].append((pick.subject, f"E={rep.pool_depth}"))
+            continue
+        # PROCEED regardless of verdict — seed the OBSERVED distribution (footage-led, no double-probe)
         dist = {"season": rep.season_dist, "habitat": rep.habitat_dist,
                 "time_of_day": rep.time_dist, "shot_type": rep.shot_dist}
         job = await _create_job(conn, pb, pick.subject, dist, deps)
         await repo.subjects.set_status(conn, subj["id"], "selected", verdict=rep.verdict,
                                        pool_depth=rep.pool_depth, job_id=job["id"])
         deps.summary["commissioned"].append((pick.subject, job["id"]))
-        await _run_job(conn, pb, job, deps)
-        return
-    await repo.playbooks.set_state(conn, pb["id"], "paused_pool")
-    await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> paused — too many infeasible candidates.")
-    deps.summary["paused"].append(("pool", "too_many_infeasible"))
+        outcome = await _run_job(conn, pb, job, deps)
+        if outcome == "sourcing_short":          # the REAL gate spoke — record the yield, try next
+            clear = job.get("_clear_count")
+            await repo.subjects.set_status(conn, subj["id"], "infeasible", verdict="SOURCING_SHORT",
+                                           clear_count=clear)
+            await record_event(conn, "subject_rejected",
+                               message=f"'{pick.subject}' sourced only {clear} clear clips — next subject",
+                               channel_id=pb["channel_id"])
+            deps.summary["failed"].append((pick.subject, f"sourcing:{clear}clear"))
+            continue
+        return                                   # submitted / paused / deterministic / blocked — done
+    await _pause_pool(conn, pb, deps, "too many commission attempts")
 
 
 async def _create_job(conn, pb, subject, dist, deps: Deps) -> dict:
@@ -192,7 +220,10 @@ async def _create_job(conn, pb, subject, dist, deps: Deps) -> dict:
 
 
 # --- running one production job to its natural boundary, routing every outcome --------------------------
-async def _run_job(conn, pb, job, deps: Deps) -> None:
+async def _run_job(conn, pb, job, deps: Deps) -> str:
+    """Run/resume ONE production to its natural boundary. Returns an outcome string; the caller
+    (_commission or tick-resume) decides what to do next. Side effects (state/alerts) are handled here,
+    EXCEPT the 'try next subject' loop, which belongs to _commission (so sourcing failures are bounded)."""
     try:
         await produce.produce_video(
             conn, deps.notifier, channel=deps.channel, topic=(job.get("payload") or {}).get("topic"),
@@ -204,25 +235,29 @@ async def _run_job(conn, pb, job, deps: Deps) -> None:
                                    else pb.get("per_job_threshold_gbp")),
             enforce_ceiling=not (job.get("payload") or {}).get("spend_approved"))
         await _on_submitted(conn, pb, job, deps)
-
+        return "submitted"
     except produce.SpendGatePause as e:
         await _on_spend_pause(conn, pb, job, e, deps)
-    except produce.ProductionError as e:                    # sourcing shortfall — expected; next subject
+        return "spend_paused"
+    except produce.ProductionError as e:                    # sourcing shortfall — the REAL gate; caller decides
         await record_event(conn, "produce_failed", message=f"sourcing shortfall: {e}",
                            channel_id=pb["channel_id"], job_id=job["id"])
-        deps.summary["failed"].append((job["id"], "sourcing"))
-        await _commission(conn, pb, deps)                  # try a different subject, no spend lost
+        job["_clear_count"] = getattr(e, "clear_count", None)   # stash the yield for the caller to record
+        return "sourcing_short"
     except _DETERMINISTIC as e:                             # render/gate — fail ONCE, do not re-render
         await repo.playbooks.set_state(conn, pb["id"], "blocked")
         await _alert(deps, f"🛑 <b>{deps.channel['name']}</b> job {job['id']} — deterministic failure "
                            f"(spent assets preserved for a fix + resume):\n<code>{e}</code>")
         deps.summary["failed"].append((job["id"], "deterministic"))
+        return "deterministic"
     except TTSScopeError as e:                              # config blocker — nothing can be produced
         await repo.playbooks.set_state(conn, pb["id"], "blocked")
         await _alert(deps, f"🛑 <b>{deps.channel['name']}</b> BLOCKED — TTS scope: <code>{e}</code>")
         deps.summary["blocked"].append(job["id"])
+        return "blocked"
     except Exception as e:  # noqa: BLE001 — TRANSIENT (network/5xx/timeout): retry with backoff
         await _on_transient(conn, pb, job, e, deps)
+        return "transient"
 
 
 async def _on_submitted(conn, pb, job, deps: Deps) -> None:
