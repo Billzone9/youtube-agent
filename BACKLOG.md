@@ -41,6 +41,13 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   Per-channel opt-in; YouTube stays primary. See `PLAN_MARKETING_ARC.md`.
 
 ## Marketing arc — carry-forward (small entries, fold into the arc plan; 2026-08-04)
+- `[ ]` **Bed-manifest origin should be DERIVABLE, not asserted.** `beds-manifest.json` binds each bed's
+  `elevenlabs_generated` attestation to its sha256, which is sound against accidental contamination — but
+  the attestation is hand-written: no `request_id`, no `cost_ledger` row, no generation timestamp ties an
+  entry to the ElevenLabs call that made it. That's weaker than the lion provenance rule (DERIVABLE source,
+  not asserted). When a bed is generated THROUGH THE MACHINE (not lifted from an old production), bind its
+  manifest entry to the ElevenLabs `request_id` + the `cost_ledger` row so origin is traceable rather than
+  claimed. Not urgent at one operator; matters at channel #2 or if bed generation is automated.
 - `[ ]` **Plan cadence against ~4.4 films/month, NOT 2/week.** The ROI report shows sustainable cadence
   ≈ 4.4/mo (~1/wk) on the recurring 30k allowance; the seed default is already `per_week: 1`. The live
   wildlife playbook carried a stale `per_week: 2` (leftover from the elephant supervised runs) — reset
