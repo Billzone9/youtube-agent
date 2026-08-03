@@ -43,6 +43,16 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   coverage-aware, not just trend/interest-aware. (Also feeds the cost-gated generative-B-roll
   fallback decision for the rare must-have shot stock can't provide — spec §4.3.)
 
+## Contradiction detector false-fires on HOMONYM subject terms (log, do not chase — 2026-08-03)
+- `[ ]` **The lion run's 23 "contradictions" were the sea-lion ambiguity, NOT a gate regression.** 19 were
+  pinnipeds ("sea lion", "seal", "walrus"), 3 were "lion (sculpture)"; ALL were correctly `clear_mismatch`
+  by the species gate. They flagged as contradictions only because `features_indicate` ("sea **lion**",
+  "**lion** sculpture") contains the subject noun "lion" as a SUBSTRING, so `_indicates_subject` thought
+  the features named the subject while the verdict rejected it. The detector's noun match is substring-
+  based; a homonym subject term trips it. Fixed for real by DISAMBIGUATING the term (subject-terms-
+  standard.md) — "African lion" surfaces no sea lions, so the contradictions vanish. If ever chased: make
+  `_indicates_subject` word-boundary + homonym aware ("sea lion" ≠ "lion"). Low priority given the term fix.
+
 ## The real 6c constraint is FOOTAGE COVERAGE, not the gate (2nd supervised run, 2026-08-03)
 - `[ ]` **The gate redesign works; the blocker is that most non-elephant subjects are footage-poor, and
   discovering it via sourcing is expensive (~40 min/subject).** With the verdict gate dropped, the
