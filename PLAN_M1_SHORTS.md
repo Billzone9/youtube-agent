@@ -87,6 +87,16 @@ discovery is proven (the success criterion) and/or tier B.** The M1 build target
 - **`ytagent/produce.py`** — a `produce_short` path (or a `format="short"` branch): bind a short EditSpec,
   pull a rotated bed from `assets/beds/`, skip/limit TTS, assemble 9:16, noise+density gates apply, submit
   to the Telegram card. Credit gate already covers the (small) spend.
+- **SOURCING — use the SINGLE-BEAT path, NOT `source_film` (checked — note 3).** `source_film` builds a
+  film-wide pool and caps vision at `max_verify=90`, so a thin-footage Short could burn a whole film's
+  vision budget (~£1.5+). `source_clips_for_brief` (one brief) is naturally bounded: `max_attempts =
+  n_target*3+10` (≈19 for a 3-clip Short) and it stops early at `n_target` clear. So a Short's vision cost
+  is **~£0.05–0.10 typical (stops at ~3 clear) and ≤~£0.34 worst-case — a fraction of the ~£0.72 film**
+  (£0.72 ≈ 42 checks → ~£0.017/check; a Short is ~3–19 checks). The conductor sources a Short with
+  `source_clips_for_brief(n_target=3, n_min=1)`, never `source_film`.
+- **LUFS is asserted, not watched (note 2):** the render/QC must fail a Short whose master drifts past
+  −14 ± 2 LUFS (proven in `prove_short_render`); below ~15s single-pass loudnorm's integrated measure is
+  untrustworthy → use dual-pass or a floor before shipping sub-15s Shorts.
 - **Publish** — `ytagent/youtube.py`: a Short is a <60s 9:16 upload with `#Shorts`; the existing
   `YouTubePublisher` insert path works with Shorts metadata + the AI-disclosure line + a cohort tag
   (metadata field) for the success measurement. Human-gated as always.

@@ -273,6 +273,17 @@ the pool most-likely-first, never a gate) was BUILT — see `scripts/vet_pool.py
   private-locked) + `update_public` (own-DB-ids only, channel-asserted). Do not add delete/list/playlist/
   comment/branding calls without an explicit, gated, reviewed reason. Consider (later) a periodic audit
   that lists what the token *could* do vs what our code *does*, so drift is visible.
+  - **REVIEW (2026-08-04) — the cohort playlist grows the surface; approved with confinement.** M1's
+    Shorts success-measurement needs a YouTube-side cohort marker (an UNLISTED cohort playlist,
+    reconstructable via `playlistItems.list`) so cohorts survive without the DB (PLAN_M1_SHORTS note 2).
+    That means `youtube.py` gains `playlists.insert` (create the ONE cohort playlist once) +
+    `playlistItems.insert` (add a cohort Short). force-ssl already permits both — **no new scope**; the
+    growth is the CODE SURFACE, which is why this review is on the record. **Confinement (mirror
+    `update_public`):** `playlistItems.insert` adds ONLY our own uploaded `youtube_video_id`s (the
+    own-DB-ids set) to ONLY our cohort playlist (id stored in our config/DB); `playlists.insert` creates
+    ONE unlisted playlist, recorded. NO delete, NO listing/adding to arbitrary/others' playlists, NO
+    comment/branding. The add runs as part of the already-Telegram-gated publish. Reason the surface
+    grew: cohort evidence must survive on YouTube, not only the DB — an explicit, reviewed, gated reason.
 - `[ ]` **Elephant #61 metadata bookkeeping (minor, not blocking).** EY9DhJdnt_w's LIVE description is
   guard-CLEAN (verified — Amendment B), but its `video_metadata` row shows `applied_at=NULL` though the
   text is live (set at upload). A cosmetic bookkeeping gap in the mark-applied path for that older
