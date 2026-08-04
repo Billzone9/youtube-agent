@@ -75,13 +75,17 @@ def _leftover(settings, marks: dict) -> list[str]:
     return dirty
 
 
-def _run(mod: str) -> tuple[int, str, float]:
+def _run(mod: str) -> tuple[int, str, float, list[str]]:
     t = time.monotonic()
     p = subprocess.run([sys.executable, "-m", f"scripts.{mod}"], capture_output=True, text=True)
     dur = time.monotonic() - t
     lines = [ln for ln in (p.stdout or "").strip().splitlines() if ln.strip()]
     tail = lines[-1] if lines else ((p.stderr or "").strip().splitlines()[-1:] or [""])[-1]
-    return p.returncode, tail.strip()[:80], dur
+    # SKIP LEDGER: a verify prints ⏭️ for a check it could not run (local-only media absent). Surface
+    # these at the health level so a green CI run and a green local run mean the SAME thing — zero
+    # failures — with the environmental delta made EXPLICIT rather than hidden inside a passing verify.
+    skips = [f"{mod}: {ln.split('⏭️', 1)[1].strip()}" for ln in lines if "⏭️" in ln]
+    return p.returncode, tail.strip()[:80], dur, skips
 
 
 def main() -> None:
@@ -91,18 +95,21 @@ def main() -> None:
     skipped: list[str] = []
 
     marks = _danger_marks(settings) if pg else None      # hermeticity high-water before the suite
+    check_skips: list[str] = []                          # in-verify skips (local-only media absent)
 
     for mod, needs_db in _OFFLINE:
         if needs_db and not pg:
             skipped.append(f"{mod} (Postgres down)")
             continue
-        rc, tail, dur = _run(mod)
+        rc, tail, dur, sk = _run(mod)
         results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
+        check_skips += sk
 
     for mod, keyenv in _OPTIONAL_LIVE:
         if os.environ.get(keyenv):
-            rc, tail, dur = _run(mod)
+            rc, tail, dur, sk = _run(mod)
             results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
+            check_skips += sk
         else:
             skipped.append(f"{mod} (no {keyenv} — optional live)")
 
@@ -127,6 +134,11 @@ def main() -> None:
     if skipped:
         print("-" * 72)
         for s in skipped:
+            print(f"  ⏭️  {s}")
+    if check_skips:                                      # explicit ledger: checks that could not run
+        print("-" * 72)
+        print("SKIPPED CHECKS (local-only media absent — green means the same, minus these):")
+        for s in check_skips:
             print(f"  ⏭️  {s}")
 
     n_pass = sum(1 for r in results if r[1] == "PASS")

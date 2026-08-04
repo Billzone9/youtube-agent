@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-agent"
+version = "0.1.0"
+description = "Autonomous multi-channel YouTube documentary platform (see CLAUDE.md)"
+requires-python = ">=3.11"
+# Pinned to match requirements.txt (the venv of record). FFmpeg is a system binary, not a pip dep.
+dependencies = [
+    "anthropic==0.116.0",
+    "google-api-python-client==2.198.0",
+    "google-auth==2.55.2",
+    "google-auth-oauthlib==1.4.0",
+    "httpx==0.28.1",
+    "pillow==12.2.0",
+    "psycopg[binary]==3.2.9",
+    "python-dotenv==1.2.2",
+    "python-telegram-bot==22.8",
+]
+
+[tool.setuptools]
+packages = ["ytagent"]
+
+# The verify suite (scripts/health.py) is the test harness — there is no pytest yet. `make health`
+# is the single "is the agent healthy" command; CI runs the same command against a seeded ephemeral
+# Postgres so a green CI run means the same thing as a green local run (see .github/workflows/health.yml).
