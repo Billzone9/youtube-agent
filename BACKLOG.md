@@ -41,6 +41,13 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   Per-channel opt-in; YouTube stays primary. See `PLAN_MARKETING_ARC.md`.
 
 ## Marketing arc — carry-forward (small entries, fold into the arc plan; 2026-08-04)
+- `[ ]` **`source_clips_for_brief` lacks the vision verdict cache that `source_film` has.** The single-beat
+  path (used by Shorts + `_source_all_beats`) re-verifies + re-PAYS vision on any clip it re-sees, whereas
+  `source_film` consults `repo.vision_cache` (source, asset_id, subject) and pays once. Vision is now the
+  DOMINANT Short cost (~£0.05/Short), so this matters: it's also what makes the `used_asset_ids` "release
+  failed-job clips" predicate free-of-consequence (a released clip re-verified for the same subject should
+  hit the cache, not re-pay). Fix: mirror `source_film`'s `vision_cache.get/put` into
+  `source_clips_for_brief`. Intended-trade confirmed on the anti-templating axis; this closes the cost axis.
 - `[ ]` **Bed-manifest origin should be DERIVABLE, not asserted.** `beds-manifest.json` binds each bed's
   `elevenlabs_generated` attestation to its sha256, which is sound against accidental contamination — but
   the attestation is hand-written: no `request_id`, no `cost_ledger` row, no generation timestamp ties an
