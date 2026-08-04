@@ -99,9 +99,35 @@ async def _mk_playbook(conn, ch, *, pool, domain=None, state="idle", next_run=No
     return row
 
 
-def _deps(ch, notif):
-    return Deps(channel=ch, providers=[], tts=object(), music=object(), llm=object(),
-                usage_sink=object(), notifier=notif, publisher=SimpleNamespace(mode="dry_run"), chat_id="0")
+class _FakeTTS:
+    """A tts stub whose credit_status returns a FIXED dict (or None). Lets the recurring-gate test drive
+    the exact failing state: KEY remaining large (rollover) but RECURRING remaining exhausted."""
+    def __init__(self, cs): self._cs = cs
+    def credit_status(self, *, key_cap=None, recurring_allowance=None): return self._cs
+
+
+def _mk_short(mode="submit"):
+    """A fake produce.produce_short driving one outcome."""
+    async def _fake(conn, notifier, *, channel, subject, brief, **kw):
+        if mode == "submit":
+            j = await (await conn.execute(
+                "INSERT INTO jobs (channel_id, type, status, payload) VALUES (%s,'produce','assembling',%s) "
+                "RETURNING id", [channel["id"], Jsonb({"topic": subject, "format": "short"})])).fetchone()
+            return {"ok": True, "job_id": j["id"], "submit": {"ok": True}}
+        if mode == "nomatch":
+            raise produce.ProductionError("short sourcing: no candidates")
+        if mode == "bed":
+            raise produce.BedUnavailableError("no attested bed")
+        if mode == "qc":
+            raise produce.ShortQCError("LUFS drift")
+        raise AssertionError(mode)
+    return _fake
+
+
+def _deps(ch, notif, *, tts=None, recurring_allowance=None):
+    return Deps(channel=ch, providers=[], tts=tts or object(), music=object(), llm=object(),
+                usage_sink=object(), notifier=notif, publisher=SimpleNamespace(mode="dry_run"), chat_id="0",
+                recurring_allowance=recurring_allowance)
 
 
 async def run():
@@ -109,6 +135,7 @@ async def run():
     conn = await psycopg.AsyncConnection.connect(settings.dsn(), row_factory=dict_row, autocommit=True)
     R.probe_feasibility = _fake_probe
     _orig_produce = produce.produce_video
+    _orig_short = produce.produce_short
     ch = await _mk_channel(conn)
     cid = ch["id"]
 
@@ -223,8 +250,63 @@ async def run():
               (await repo.playbooks.get_by_channel(conn, cid))["state"] == "paused_pool"
               and any("paused" in m.lower() for m in notif.msgs))
 
+        print("[7] RECURRING cadence gate — paces on remaining_recurring, NOT the rollover-inflated key")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["good7"])          # default format_mix ["16:9"] → a film
+        produce.produce_video = _mk_produce("submit")       # would succeed IF the gate let it through
+        # THE FAILING CASE: key remaining HUGE (rollover), recurring EXHAUSTED → must PAUSE, not commission.
+        tts_exhausted = _FakeTTS({"remaining": 50000, "remaining_recurring": 100})
+        notif = _Notifier()
+        await tick(conn, _deps(ch, notif, tts=tts_exhausted, recurring_allowance=30000))
+        pbx = await repo.playbooks.get_by_channel(conn, cid)
+        # a film needs ~6850 EL; remaining_recurring=100 < 6850 → pause. If the gate read the KEY remaining
+        # (50000) instead, 6850 < 50000 → it would PROCEED. So paused_ceiling IS the proof it read the right field.
+        check("recurring exhausted (100) DESPITE key remaining 50000 → PAUSED (proves it read remaining_recurring)",
+              pbx["state"] == "paused_ceiling", pbx["state"])
+        check("no subject was commissioned (the gate is BEFORE the commit)",
+              len(await repo.subjects.list_for_channel(conn, cid)) == 0)
+
+        print("[7b] cadence gate FAILS CLOSED when the credit read is unavailable (None)")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["good7b"])
+        notif = _Notifier()
+        await tick(conn, _deps(ch, notif, tts=_FakeTTS(None), recurring_allowance=30000))
+        check("credit_status None → PAUSED (fail closed, not commissioning blind)",
+              (await repo.playbooks.get_by_channel(conn, cid))["state"] == "paused_ceiling"
+              and any("recurring" in m.lower() for m in notif.msgs))
+
+        print("[8] format-mix routes 9:16 to produce_short; NoMatch skips ONE (no 3× retry), bed→blocked")
+        produce.produce_short = _mk_short("submit")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        pb = await _reset_pb(conn, cid, pool=["s_ok"])
+        await conn.execute("UPDATE playbooks SET format_mix='[\"9:16\"]'::jsonb WHERE channel_id=%s", [cid])
+        notif = _Notifier()
+        await tick(conn, _deps(ch, notif))                  # no recurring_allowance → gate off; Short est=0 anyway
+        subs = {r["subject"]: r["status"] for r in await repo.subjects.list_for_channel(conn, cid)}
+        check("Short subject marked produced", subs.get("s_ok") == "produced", str(subs))
+        check("playbook rescheduled to idle (not stuck producing)",
+              (await repo.playbooks.get_by_channel(conn, cid))["state"] == "idle")
+
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["s_bad"])
+        await conn.execute("UPDATE playbooks SET format_mix='[\"9:16\"]'::jsonb WHERE channel_id=%s", [cid])
+        produce.produce_short = _mk_short("nomatch")
+        await tick(conn, _deps(ch, _Notifier()))
+        check("Short NoMatch → subject infeasible, playbook idle (skip to next tick, no 3× retry)",
+              (await repo.playbooks.get_by_channel(conn, cid))["state"] == "idle"
+              and {r["status"] for r in await repo.subjects.list_for_channel(conn, cid)} == {"infeasible"})
+
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["s_nobed"])
+        await conn.execute("UPDATE playbooks SET format_mix='[\"9:16\"]'::jsonb WHERE channel_id=%s", [cid])
+        produce.produce_short = _mk_short("bed")
+        await tick(conn, _deps(ch, _Notifier()))
+        check("Short empty-bed → playbook BLOCKED (config; not retried)",
+              (await repo.playbooks.get_by_channel(conn, cid))["state"] == "blocked")
+
     finally:
         produce.produce_video = _orig_produce
+        produce.produce_short = _orig_short
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
         await conn.execute("DELETE FROM approvals WHERE channel_id=%s", [cid])   # spend cards FK jobs
         await conn.execute("DELETE FROM jobs WHERE channel_id=%s", [cid])

@@ -75,7 +75,8 @@ async def run():
     notifier, bot = await _make_notifier(settings)
     deps = Deps(channel=ch, providers=providers, tts=tts, music=music, llm=llm, usage_sink=sink,
                 notifier=notifier, publisher=DryRunPublisher(), chat_id=settings.chat_id,
-                key_credit_cap=settings.elevenlabs_key_credit_cap)
+                key_credit_cap=settings.elevenlabs_key_credit_cap,
+                recurring_allowance=settings.elevenlabs_recurring_allowance_cr)
 
     t0 = time.monotonic()
     summary = await tick(conn, deps)

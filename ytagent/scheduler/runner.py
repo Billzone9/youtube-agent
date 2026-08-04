@@ -44,6 +44,10 @@ _SOURCING_FAIL_CAP = 3       # consecutive sourcing shortfalls before pausing (m
 # failures that are DETERMINISTIC — same spec + clips → same result; retrying only burns compute to fail
 # identically. They fail ONCE, alert, and PRESERVE the spent assets for a Banks-fixed resume.
 _DETERMINISTIC = (AssemblyNoiseError, VisualDensityError, FFmpegError)
+# Rough per-format ElevenLabs credit draw for the RECURRING cadence gate (approximate is fine — it's a
+# monthly-budget governor, not a per-job spend gate): a long-form ≈ TTS 4,379 + music 2,475; a credit-
+# light Short reuses a bed and has no voice → ~0.
+_FILM_EL_CREDITS, _SHORT_EL_CREDITS = 6850, 0
 
 
 @dataclass
@@ -59,6 +63,7 @@ class Deps:
     chat_id: str
     description_exemplar: object = None
     key_credit_cap: int | None = None
+    recurring_allowance: int | None = None       # RECURRING monthly EL credits — the CADENCE gate (note 2)
     now: datetime = None
     summary: dict = field(default_factory=lambda: {
         "resumed": [], "commissioned": [], "skipped_infeasible": [], "submitted": [],
@@ -152,11 +157,114 @@ async def _pause_pool(conn, pb, deps: Deps, reason: str) -> None:
     deps.summary["paused"].append(("pool", reason))
 
 
+async def _pick_format(conn, pb) -> str:
+    """Rotate the playbook's format_mix per commission so one playbook produces both Shorts and long-form
+    at its ratio. Position = count of prior produce jobs on the channel (deterministic, no new state).
+    Falls back to the legacy single `format`."""
+    mix = pb.get("format_mix") or [pb.get("format", "16:9")]
+    if not isinstance(mix, list) or not mix:
+        mix = [pb.get("format", "16:9")]
+    n = (await (await conn.execute(
+        "SELECT count(*) c FROM jobs WHERE channel_id=%s AND type='produce'",
+        [pb["channel_id"]])).fetchone())["c"]
+    return mix[int(n) % len(mix)]
+
+
+async def _recurring_gate(conn, pb, deps: Deps, fmt: str) -> bool:
+    """CADENCE gate on the RECURRING monthly allowance (note 2) — NOT the key cap (which includes one-off
+    rollover). Returns True to proceed, False if it PAUSED. FAILS CLOSED: an unreadable credit status
+    pauses rather than commissioning blind (the OPPOSITE of the per-job key gate, which degrades open —
+    per-job = don't-block-on-a-blip; cadence = don't-over-commit-blind). Off (not degraded) when no
+    recurring_allowance is configured."""
+    if deps.recurring_allowance is None:
+        return True
+    est = _SHORT_EL_CREDITS if fmt == "9:16" else _FILM_EL_CREDITS
+    status_fn = getattr(deps.tts, "credit_status", None)
+    cs = (await asyncio.to_thread(status_fn, key_cap=deps.key_credit_cap,
+                                  recurring_allowance=deps.recurring_allowance)) if status_fn else None
+    if cs is None:                                   # FAIL CLOSED — don't commission blind to the budget
+        await repo.playbooks.set_state(conn, pb["id"], "paused_ceiling")
+        await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> cadence PAUSED — the ElevenLabs recurring "
+                           f"budget is UNREADABLE (fails closed; not commissioning blind). Resume when readable.")
+        deps.summary["paused"].append(("recurring", "unreadable"))
+        return False
+    remaining = int(cs.get("remaining_recurring") or 0)
+    if est > remaining:                              # recurring budget spent — pace cadence (don't burn rollover)
+        await repo.playbooks.set_state(conn, pb["id"], "paused_ceiling")
+        await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> cadence PAUSED — a {fmt} needs ~{est} EL "
+                           f"credits, only {remaining} of the {deps.recurring_allowance} RECURRING allowance "
+                           f"remain this month (rollover is not recurring budget).")
+        deps.summary["paused"].append(("recurring", f"{remaining}<{est}"))
+        return False
+    return True
+
+
+async def _reschedule(conn, pb, deps: Deps) -> None:
+    nxt = next_run_from_cadence(pb.get("cadence"), deps.now)
+    async with conn.transaction():
+        await repo.playbooks.set_state(conn, pb["id"], "idle")
+        await repo.playbooks.set_next_run(conn, pb["id"], nxt)
+
+
+async def _commission_short(conn, pb, deps: Deps) -> None:
+    """Commission ONE Short via produce_short (no probe/script — it sources directly). Failure routing per
+    the taxonomy: BedUnavailable→BLOCK; NoMatch→skip to NEXT TICK (one attempt, never the film 3×-subject
+    retry that would re-pay vision); ShortQC→fail once; spend→pause; transient→next tick. Cheap enough to
+    just re-run on the next scheduled tick."""
+    pick = await next_subject(conn, pb, llm=deps.llm)
+    if pick.subject is None:
+        await _pause_pool(conn, pb, deps, f"no subject to commission ({pick.reason})")
+        return
+    subj = await repo.subjects.record(conn, channel_id=pb["channel_id"], subject=pick.subject,
+                                      source=pick.source, status="proposed")
+    brief = f"a wild {pick.subject}, close, cinematic, natural movement, daytime"
+    try:
+        res = await produce.produce_short(
+            conn, deps.notifier, channel=deps.channel, subject=pick.subject, brief=brief,
+            providers=deps.providers, llm_provider=deps.llm, usage_sink=deps.usage_sink,
+            publisher=deps.publisher, chat_id=deps.chat_id,
+            per_job_threshold_gbp=pb.get("per_job_threshold_gbp"), enforce_ceiling=True)
+        await repo.subjects.set_status(conn, subj["id"], "produced", job_id=res["job_id"])
+        deps.summary["submitted"].append(res["job_id"])
+        await _reschedule(conn, pb, deps)
+    except produce.BedUnavailableError as e:                 # CONFIG blocker — human seeds beds, no retry
+        await repo.playbooks.set_state(conn, pb["id"], "blocked")
+        await _alert(deps, f"🛑 <b>{deps.channel['name']}</b> Shorts BLOCKED — <code>{e}</code>")
+        deps.summary["blocked"].append(pick.subject)
+    except produce.ShortQCError as e:                        # DETERMINISTIC — fail once, don't re-source
+        await repo.subjects.set_status(conn, subj["id"], "infeasible", verdict="SHORT_QC")
+        await _alert(deps, f"🛑 <b>{deps.channel['name']}</b> Short QC failed (fail once): <code>{e}</code>")
+        deps.summary["failed"].append((pick.subject, "short_qc"))
+        await _reschedule(conn, pb, deps)
+    except produce.ProductionError as e:                     # NoMatch — skip ONE, next tick (NO 3× retry)
+        await repo.subjects.set_status(conn, subj["id"], "infeasible", verdict="SOURCING_SHORT")
+        await record_event(conn, "subject_rejected",
+                           message=f"short '{pick.subject}' no sourcing match — skip to next tick (no retry): {e}",
+                           channel_id=pb["channel_id"])
+        deps.summary["failed"].append((pick.subject, "short_sourcing"))
+        await _reschedule(conn, pb, deps)
+    except produce.SpendGatePause as e:
+        await repo.playbooks.set_state(conn, pb["id"],
+                                       "paused_ceiling" if e.gate == "ceiling" else "paused_spend")
+        await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> Short spend paused ({e.gate}): <code>{e}</code>")
+        deps.summary["paused"].append(("spend", e.gate))
+    except Exception as e:  # noqa: BLE001 — transient: next scheduled tick retries (no immediate re-pay)
+        await _alert(deps, f"⚠️ <b>{deps.channel['name']}</b> Short transient error, retry next tick: <code>{e}</code>")
+        deps.summary["retrying"].append((pick.subject, 1))
+        await _reschedule(conn, pb, deps)
+
+
 async def _commission(conn, pb, deps: Deps) -> None:
     """Pick a subject → probe for the DISTRIBUTION (a pool-depth FLOOR is the only probe gate now) →
     seed it → run a REAL production. Sourcing (not the verdict) is the feasibility gate; a sourcing
     shortfall records the ACTUAL clear count and moves to the next subject, bounded by the consecutive-
     sourcing-failure cap. No asks beyond the pause alert."""
+    fmt = await _pick_format(conn, pb)                       # format-mix: Short vs long-form this tick
+    if not await _recurring_gate(conn, pb, deps, fmt):       # CADENCE gate (recurring, fails closed)
+        return
+    if fmt == "9:16":                                        # Shorts path — direct source, no probe/script
+        await _commission_short(conn, pb, deps)
+        return
     for _ in range(_MAX_COMMISSION_TRIES):
         if await repo.subjects.trailing_sourcing_failures(conn, pb["channel_id"]) >= _SOURCING_FAIL_CAP:
             await _pause_pool(conn, pb, deps, f"{_SOURCING_FAIL_CAP} consecutive subjects failed at "
