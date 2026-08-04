@@ -77,6 +77,24 @@ keep weekly long-form with free varied Shorts, but it doesn't justify spending 9
 the weak-reach channel before discovery is proven — so it's declined. **Long-form scales back UP once
 discovery is proven (the success criterion) and/or tier B.** The M1 build targets this mix.
 
+## Cadence guards — STATED before wiring item 4 (produce_short runs UNATTENDED once scheduled)
+**Failure classification** (produce_short raises distinct types; the runner routes each — no film-shaped
+3× retry that re-pays vision):
+| failure | exception | route |
+|---|---|---|
+| empty bed library | `BedUnavailableError` | BLOCK playbook + alert (config; a human seeds beds; never retry) |
+| NoMatch (sourcing) | `ProductionError` | record + skip to next tick (ONE attempt, not the 3×-subject retry) |
+| LUFS drift | `ShortQCError` | deterministic — fail ONCE (re-sourcing re-pays vision) |
+| network / 5xx | generic | transient — retry w/ backoff |
+
+**Recurring-allowance cadence gate:** the playbook decides cadence, so it enforces the RECURRING
+allowance (30,000), not the key cap (which includes one-off rollover). `credit_status(...,
+recurring_allowance=...)` now returns `remaining_recurring` (allowance − this-period usage); the scheduler
+checks a job's credits against THAT at commission, and pauses cadence when the recurring budget is spent
+— so it can't burn rollover in month 1 and under-deliver in month 2. (Live now: 15,684 recurring left of
+30,000, independent of the 5,684 key remaining.) The per-job key-cap gate is unchanged; this is a second,
+cadence-level gate. Both are BUILT; the scheduler wiring that consumes them is the item-4 build.
+
 ## The build (file level)
 
 - **Format spec** — extend the produce path for a `short` format: 9:16 (assembly `Target`/`for_format`

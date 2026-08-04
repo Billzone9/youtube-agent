@@ -77,6 +77,16 @@ class ProductionError(RuntimeError):
     """A production could not complete (e.g. a shot-brief no-matched) — fails loudly, no partial video."""
 
 
+class BedUnavailableError(RuntimeError):
+    """No attested bed in the library — a CONFIG blocker (a human must seed assets/beds/ + the manifest).
+    Unattended, the scheduler must BLOCK the playbook + alert, NOT retry (retrying can never succeed)."""
+
+
+class ShortQCError(RuntimeError):
+    """A Short's master failed a DETERMINISTIC QC (LUFS drift). Fail ONCE — re-sourcing re-PAYS vision for
+    a deterministic gate, so the scheduler routes this like a render failure, never a retry."""
+
+
 class SpendGatePause(RuntimeError):
     """The 4→5 spend gate would be crossed: the per-job estimate exceeds the playbook threshold, or
     month-to-date + this estimate would breach the global ceiling, or the ElevenLabs key lacks the
@@ -824,7 +834,7 @@ async def produce_short(conn, notifier, *, channel, subject, brief, providers, l
     bed = pick_bed(job["id"])                       # rotate by job id → consecutive Shorts differ
     if bed is None:
         await repo.jobs.set_status(conn, job["id"], "failed", error="no attested bed in the library")
-        raise ProductionError("no attested bed — seed assets/beds/ + beds-manifest.json")
+        raise BedUnavailableError("no attested bed — seed assets/beds/ + beds-manifest.json (config blocker)")
 
     # SOURCE — bounded single-beat path, cross-video exclude; vision is the spend
     used = await repo.sourcing.used_asset_ids(conn, channel["id"])
@@ -847,7 +857,7 @@ async def produce_short(conn, notifier, *, channel, subject, brief, providers, l
     lufs = float(result.qc.get("loudness_lufs") or 0.0)
     if abs(lufs - _SHORT_LUFS_TARGET) > _SHORT_LUFS_TOL:
         await repo.jobs.set_status(conn, job["id"], "failed", error=f"LUFS {lufs} drift")
-        raise ProductionError(f"short master {lufs} LUFS drifts past {_SHORT_LUFS_TARGET}±{_SHORT_LUFS_TOL}")
+        raise ShortQCError(f"short master {lufs} LUFS drifts past {_SHORT_LUFS_TARGET}±{_SHORT_LUFS_TOL}")
 
     # DESCRIBE (+ #Shorts — the publish gate requires it) → SUBMIT to the card
     desc = generate_description({"topic": subject, "title": f"Wild {subject.title()}", "facts": "",

@@ -23,11 +23,13 @@ class ElevenLabsTTS:
     def name(self) -> str:
         return "elevenlabs"
 
-    def credit_status(self, *, key_cap: int | None = None) -> dict | None:
-        """Remaining credits the key can actually spend, for the pre-spend gate. The subscription
-        endpoint reports ACCOUNT usage/limit; a per-key cap (which ElevenLabs does NOT expose via GET)
-        is passed in from config and mirrored here — the binding limit is the smaller of the two.
-        Returns None on any failure so the gate degrades (never blocks production on an infra blip)."""
+    def credit_status(self, *, key_cap: int | None = None,
+                      recurring_allowance: int | None = None) -> dict | None:
+        """Remaining credits, for TWO different gates. `remaining` = what the KEY can spend (min of the
+        account limit incl. rollover and the per-key cap) — the per-job structural gate. `remaining_recurring`
+        = the RECURRING monthly allowance minus this-period usage — the CADENCE gate, so a scheduler paces
+        to the sustainable budget and never spends one-off rollover as if it were recurring (note 2).
+        Returns None on any failure so a gate degrades (never blocks production on an infra blip)."""
         try:
             with httpx.Client(timeout=_TIMEOUT) as client:
                 r = client.get("https://api.elevenlabs.io/v1/user/subscription",
@@ -38,8 +40,12 @@ class ElevenLabsTTS:
             used = int(d.get("character_count") or 0)
             acct_limit = int(d.get("character_limit") or 0)
             eff = min(acct_limit, key_cap) if key_cap else acct_limit
-            return {"used": used, "account_limit": acct_limit, "key_cap": key_cap,
-                    "effective_limit": eff, "remaining": max(0, eff - used)}
+            out = {"used": used, "account_limit": acct_limit, "key_cap": key_cap,
+                   "effective_limit": eff, "remaining": max(0, eff - used)}
+            if recurring_allowance is not None:
+                out["recurring_allowance"] = recurring_allowance
+                out["remaining_recurring"] = max(0, recurring_allowance - used)
+            return out
         except Exception:  # noqa: BLE001 — a credit-check failure must not halt production
             return None
 
