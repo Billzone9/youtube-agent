@@ -3,6 +3,40 @@
 **As of 2026-08-04, `origin/main` = `9f1ecce`** — all M1-build commits shipped, in sync. Run `make health`
 first. Full spec: `PLAN_M1_SHORTS.md`; arc context: `PLAN_MARKETING_ARC.md`.
 
+## ⛔ MARKETING ARC STOPPED / ITEM 6 PARKED (2026-08-04) — READ FIRST
+The A′ marketing arc is **STOPPED**. Banks's standing goal was never superseded: **FINISH THE AGENT —
+every outstanding platform component — and make sure the code works, BEFORE producing or publishing any
+further video.** A′ was approved as a plan, but its payoff requires publishing, so the build sequence
+drifted to the edge of a live upload. That was drift, not a decision; it is corrected. No production, no
+publishing, until Banks says the build is done. See the discipline note now in `CLAUDE.md`.
+
+- **Item 6 (live publish) is PARKED, not done.** Nothing publishes. **Resume trigger (explicit, not a
+  date, not a next step): _resume when the agent build is complete AND Banks decides to publish._**
+- **ARMED STATE (this is now true and must be stated plainly).** The YouTube token carries
+  `youtube.force-ssl` and resolves to `UCRkrZa2yjLLw-f67H2pYI2g` ("The Tales of Wildlife and Nature"),
+  verified read-only against Google's `tokeninfo` + `channels.list`. So **the machine CAN publish where
+  it previously could not** (`bot._build_publisher` returns a LIVE `YouTubePublisher` whenever a refresh
+  token is set — it now is).
+- **What still prevents a publish:** (1) the **HARD Telegram gate** — a real upload happens only on
+  Banks's tap of a publish card, never autonomously; (2) the **wildlife playbook is DISABLED**
+  (`enabled=false`, `state=idle`, `cadence.per_week=1`, `format_mix=["16:9"]`), so the scheduler
+  commissions nothing; (3) **the approval queue is now EMPTY** — see the void below.
+- **Nothing is scheduled to run unattended.** Confirmed: 0 enabled playbooks due, 0 pending approvals,
+  0 non-terminal jobs.
+- **QUEUE VOIDED (housekeeping, 2026-08-04).** Accumulated test/dev debris — **32 pending approvals, 33
+  awaiting-approval publish jobs, 32 awaiting-approval videos, 9 stuck (assembling/running) jobs** — were
+  terminal'd (approvals→rejected, jobs→cancelled, videos→rejected) in one DB-only transaction, audit
+  event `housekeeping_void`. This included **approval 188 / job 521 / video 136** ("African Elephant"
+  9:16, the M1 Short dry-run card): **VOIDED** — its purpose (prove `produce_short` reaches a real card)
+  was served and verified; it was not left as an ambiguous pending publish. The two REAL published
+  long-forms (`yGdNuUB5f_I`, `EY9DhJdnt_w`) and all lion dry-run artifacts were untouched. Note: the old
+  Telegram cards may still show buttons, but a tap is now a **DB no-op** (`approvals.decide` only acts on
+  `state='pending'`). Root cause to fix in the build: **the verify/supervised scripts create approvals +
+  jobs and never clean them up** — make them hermetic/self-cleaning (like `verify_cohort_playlist`).
+- **M1's built parts STAY** (`produce_short`, `videos.cohort`, the Short guards, the cadence wiring, the
+  cohort playlist writes). They are agent CAPABILITY (done + verified), not hand-cranked output. Built ≠
+  exercised: the capability may exist; it is simply not run for output until the build is done. Not unwound.
+
 ## The decision that frames M1
 Discovery-weighted cadence: fortnightly long-form (~13,700 cr/mo) + **~4 Shorts/wk** (~23,600/mo, ~6,400
 headroom), NOT weekly long-form (~99% of the 30k recurring). Shorts are the discovery lever at 0 subs;

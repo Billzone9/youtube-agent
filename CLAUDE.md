@@ -15,6 +15,12 @@ corrections, reviews, and recommendations. Claude Code is the engineer and decid
 order the build. Work is handed to Claude Code to evaluate and plan itself, not presented to Banks as a
 menu of directions chosen by the reviewer. **Banks approves; Claude Code plans; Claude reviews.**
 
+**Build-first discipline (standing, 2026-08-04).** The stated goal is to FINISH THE AGENT — every
+outstanding platform component — before producing or publishing any further video. Production
+capability may be BUILT; it is not to be EXERCISED for output. Any plan whose payoff requires
+publishing is out of scope until Banks says the build is done. If a proposed direction ends in
+publishing, say so before it is approved, not after.
+
 ---
 
 ## What you are building — READ THIS FIRST
