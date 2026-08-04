@@ -315,6 +315,8 @@ async def _assemble_and_submit(conn, notifier, *, channel, script, sourced, narr
         llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
         description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, topic=topic,
         job_id=job_id)
+    async with conn.transaction():   # D2: terminal once submitted (was left at 'assembled' indefinitely)
+        await repo.jobs.set_status(conn, job_id, "produced")
     return {"ok": True, "job_id": job_id, "script": script, "sourced": sourced, "density": density,
             "result": result, "description": desc, "submit": sub, "design": design}
 
@@ -444,7 +446,9 @@ async def _checkpoint(conn, state: dict, stage: str, *, extra: dict | None = Non
     state["stage"] = stage
     if extra:
         state.update(extra)
-    status = "assembled" if stage in ("assembled", "submitted") else "assembling"
+    # D2: 'produced' is the TERMINAL status (artifact built + submitted). Every pre-submit stage stays
+    # 'assembling' (in-progress → resumable, so a crash after the 'assembled' stage is still recovered).
+    status = "produced" if stage == "submitted" else "assembling"
     async with conn.transaction():
         await repo.jobs.set_status(conn, state["job_id"], status, result={"production_state": state})
         await conn.execute("UPDATE jobs SET stage=%s WHERE id=%s", [stage, state["job_id"]])

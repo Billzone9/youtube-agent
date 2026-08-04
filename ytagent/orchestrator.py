@@ -9,6 +9,7 @@ The approve path is THREE phases so a long real upload never holds a DB transact
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from psycopg.types.json import Jsonb
@@ -22,6 +23,23 @@ if TYPE_CHECKING:  # avoid importing transports/impls at runtime
     from .metadata.description import Description
     from .notifier import Notifier
     from .publish import Publisher, PublishResult
+
+
+# How long a publish approval stays valid to act on. A tap after this is refused as stale (D2 decision):
+# the review no longer reliably reflects the artifact or the metadata standards it was written to. Chosen
+# window = 7 days (a week-old review of a specific file + text should not silently upload). Later this
+# becomes a dashboard-editable per-channel setting; for now it is a stated, single constant.
+_PUBLISH_APPROVAL_TTL = timedelta(days=7)
+
+
+def _publish_approval_stale_age(approval: dict) -> timedelta | None:
+    """Return the approval's age if it is older than the TTL (→ refuse), else None. Spend approvals are
+    exempt (handled/returned earlier); this is only reached for publish/publish_public approvals."""
+    created = approval.get("created_at")
+    if created is None:
+        return None
+    age = datetime.now(timezone.utc) - created
+    return age if age > _PUBLISH_APPROVAL_TTL else None
 
 
 def _fmt_num(v: Any, suffix: str = "", nd: int = 1) -> str:
@@ -323,6 +341,33 @@ async def handle_decision(
                 text=f"❌ <b>Rejected</b> by {decided_by}\n<b>{video['title']}</b> — not published.",
             )
         return {"handled": True, "decision": "reject", "job_id": job["id"]}
+
+    # STALENESS GATE (D2 decision, 2026-08-04). A publish approval is a point-in-time review of THIS
+    # artifact + THIS metadata. Beyond the window that review no longer reflects the file (it may have
+    # moved/changed) or the standards the metadata was written to (approval 188 went stale within hours —
+    # it predated the #Shorts gate it would then have failed). So a card tapped after the window is
+    # REFUSED, not uploaded; re-submitting produces a fresh, currently-valid review.
+    stale_age = _publish_approval_stale_age(approval)
+    if stale_age is not None:
+        async with conn.transaction():
+            await repo.jobs.set_status(conn, job["id"], "rejected")
+            if not is_publish:
+                await repo.videos.set_status(conn, video["id"], "rejected")
+            await conn.execute("UPDATE approvals SET state='expired' WHERE id=%s", [approval["id"]])
+            await record_event(
+                conn, "approval_expired",
+                message=f"publish approval {approval['id']} tapped {stale_age.days}d after creation "
+                        f"(> {_PUBLISH_APPROVAL_TTL.days}d TTL) — refused as stale, not uploaded",
+                channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+                data={"age_days": stale_age.days, "ttl_days": _PUBLISH_APPROVAL_TTL.days})
+        if msg_id:
+            await notifier.update_resolved(
+                chat_id=chat_id, message_id=msg_id,
+                text=(f"⌛ <b>Expired</b> — this approval for <b>{video['title']}</b> was created "
+                      f"{stale_age.days} days ago (over the {_PUBLISH_APPROVAL_TTL.days}-day limit) and "
+                      f"was <b>NOT</b> published: the review may no longer match the file or current "
+                      f"standards. Re-submit for a fresh review."))
+        return {"handled": True, "decision": "expired", "job_id": job["id"], "age_days": stale_age.days}
 
     verb = "publishing (public)" if is_publish else "uploading"
     if publisher.mode == "live" and msg_id:

@@ -105,9 +105,11 @@ async def _claim(conn, *, now, states, due_only: bool) -> list[dict]:
 async def _inflight_job(conn, pb, now) -> dict | None:
     """A produce job for this channel that is mid-flight (not submitted, not failed) and due to run
     (past its retry backoff). Restart survival + retry pickup."""
+    # D2: 'assembling' now means IN-PROGRESS for every pre-submit stage (a submitted job is terminal
+    # 'produced'), so status='assembling' alone captures exactly the resumable jobs — no fragile
+    # stage<>'submitted' guard, and no crash-after-assembly job slipping through under an 'assembled' status.
     cur = await conn.execute(
         "SELECT * FROM jobs WHERE channel_id=%s AND type='produce' AND status='assembling' "
-        "AND (stage IS NULL OR stage <> 'submitted') "
         "AND (next_attempt_at IS NULL OR next_attempt_at <= %s) ORDER BY id DESC LIMIT 1",
         [pb["channel_id"], now])
     return await cur.fetchone()

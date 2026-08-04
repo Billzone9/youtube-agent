@@ -23,11 +23,17 @@ from .seed import run_seed
 
 
 def _build_publisher(settings: Settings):
-    """YouTubePublisher when a refresh token is configured; else the dry-run publisher."""
-    if settings.youtube_refresh_token:
+    """Live YouTubePublisher ONLY when live publishing is EXPLICITLY chosen (YTAGENT_LIVE_PUBLISH=true)
+    AND a refresh token exists; otherwise the dry-run publisher. A credential's presence is NOT consent
+    to publish (D2, 2026-08-04) — an armed token stays dry-run until someone deliberately flips the flag,
+    so a valid token can never silently arm a pending card into a live upload."""
+    if settings.live_publish and settings.youtube_refresh_token:
         from .youtube import YouTubePublisher  # imported lazily (needs the google libs)
 
+        print("[bot] LIVE publishing ENABLED (YTAGENT_LIVE_PUBLISH set + refresh token present)")
         return YouTubePublisher(settings)
+    if settings.youtube_refresh_token and not settings.live_publish:
+        print("[bot] refresh token present but YTAGENT_LIVE_PUBLISH is off → DRY-RUN (armed, not exercised)")
     return DryRunPublisher()
 
 

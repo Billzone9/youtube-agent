@@ -30,6 +30,7 @@ _OFFLINE = [
     ("verify_shorts", False),             # M1 Shorts density + bed library (pure/local)
     ("verify_short_publish", False),      # M1 Short publish gate — must classify as a Short (pure)
     ("verify_cohort_playlist", True),     # M1 item 2 — unlisted cohort playlist writes (confined)
+    ("verify_d2", True),                  # D2 — job terminal status, explicit live-publish, approval TTL
     ("verify_slice1", True),
     ("verify_layer1", True),
     ("verify_scheduler", True),

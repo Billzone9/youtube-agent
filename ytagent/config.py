@@ -45,6 +45,11 @@ class Settings:
     youtube_client_id: str | None = None
     youtube_client_secret: str | None = None
     youtube_refresh_token: str | None = None
+    # Live publishing is an EXPLICIT choice, never inferred from a token's presence (D2, 2026-08-04).
+    # A refresh token means the agent CAN publish; this flag means it is CHOSEN to. Default OFF: even an
+    # armed force-ssl token stays dry-run until someone sets YTAGENT_LIVE_PUBLISH=true. Inferring "go
+    # live" from a credential being set is how 32 publish cards became armed without anyone choosing it.
+    live_publish: bool = False
     # LLM provider (optional — no key ⇒ the writer degrades to NullWriter, never fabricates)
     anthropic_api_key: str | None = None
     # Stock footage providers (optional — no key ⇒ that provider is dropped from the pool)
@@ -80,6 +85,7 @@ class Settings:
             "bot_token_set": bool(self.bot_token),
             "chat_id_set": bool(self.chat_id),
             "youtube_configured": bool(self.youtube_refresh_token),
+            "live_publish": self.live_publish,   # explicit; a token alone does NOT mean live
             "anthropic_configured": bool(self.anthropic_api_key),
             "pexels_configured": bool(self.pexels_api_key),
             "pixabay_configured": bool(self.pixabay_api_key),
@@ -101,6 +107,7 @@ def load_settings() -> Settings:
         youtube_client_id=os.environ.get("YOUTUBE_CLIENT_ID"),
         youtube_client_secret=os.environ.get("YOUTUBE_CLIENT_SECRET"),
         youtube_refresh_token=os.environ.get("YOUTUBE_REFRESH_TOKEN"),
+        live_publish=os.environ.get("YTAGENT_LIVE_PUBLISH", "").strip().lower() in ("1", "true", "yes", "on"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
         pexels_api_key=os.environ.get("PEXELS_API_KEY"),
         pixabay_api_key=os.environ.get("PIXABAY_API_KEY"),
