@@ -403,8 +403,8 @@ async def handle_decision(
     # The publish above is already irreversible and recorded. Placing the video in its unlisted cohort
     # playlist is a best-effort marker for the Analytics pull — a failure here is logged, not raised.
     await _place_in_cohort_playlist(
-        conn, publisher, channel=channel, video=video, result=result,
-        job=job, approval=approval)
+        conn, publisher, notifier, channel=channel, video=video, result=result,
+        job=job, approval=approval, chat_id=chat_id)
 
     if msg_id:
         await notifier.update_resolved(
@@ -416,10 +416,15 @@ async def handle_decision(
     }
 
 
-async def _place_in_cohort_playlist(conn, publisher, *, channel, video, result, job, approval) -> None:
+async def _place_in_cohort_playlist(conn, publisher, notifier, *, channel, video, result, job,
+                                    approval, chat_id=None) -> None:
     """After a LIVE publish, add the video to its cohort's unlisted playlist ONCE (BACKLOG review
     2026-08-04). Confined to our own uploaded id + our own playlist by youtube.py. Best-effort: a dry
-    run is a no-op, and any failure is recorded, never raised — the publish already succeeded."""
+    run is a no-op, and any failure is recorded, never raised — the publish already succeeded.
+
+    On failure it ALSO alerts Banks at the time (not eight weeks later at the Analytics pull): the
+    video is public and the DB says published, but its YouTube-side cohort marker is absent. The DB
+    `videos.cohort` column is the durable fallback — the alert points at re-adding it by hand."""
     cohort = video.get("cohort")
     if not (result.mode == "live" and result.youtube_video_id and cohort):
         return
@@ -448,6 +453,19 @@ async def _place_in_cohort_playlist(conn, publisher, *, channel, video, result, 
                 conn, "cohort_playlist_failed", message=str(e),
                 channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
                 data={"cohort": cohort, "youtube_video_id": result.youtube_video_id})
+        # Surface it AT THE TIME — silence here is the exact failure the cohort playlist exists to
+        # prevent. The video is public; only its YouTube-side marker is missing. DB cohort is the fallback.
+        try:
+            await notifier.notify(
+                chat_id=chat_id,
+                text=(f"⚠️ <b>Cohort playlist not updated</b>\n<b>{video.get('title')}</b> "
+                      f"(<code>{result.youtube_video_id}</code>) published fine, but adding it to the "
+                      f"<b>{cohort}</b> cohort playlist FAILED:\n<code>{e}</code>\n"
+                      f"The video is safe and the DB <code>videos.cohort</code> column still records it — "
+                      f"that's the fallback. Re-add to the playlist by hand, or a retry will pick it up "
+                      f"(it's unmarked)."))
+        except Exception:  # noqa: BLE001 — an alert failure must not mask the (already-recorded) original
+            pass
 
 
 async def _record_misplaced(conn, notifier, *, channel, job, video, approval, chat_id, msg_id,

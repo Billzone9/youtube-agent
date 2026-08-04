@@ -133,6 +133,15 @@ class _FakePublisher:
         return self.returns
 
 
+class _FakeNotifier:
+    """Records notify() so we can assert the failure path actually alerts Banks at the time."""
+    def __init__(self):
+        self.alerts = []
+
+    async def notify(self, *, chat_id, text):
+        self.alerts.append(text)
+
+
 def _result(mode, yt_id):
     return PublishResult(mode=mode, privacy_status=PRIVACY_LOCKED, job_status="published",
                          video_status="published", youtube_video_id=yt_id)
@@ -162,12 +171,14 @@ async def part_b():
             return v
 
         approval = {"id": None}
+        notif = _FakeNotifier()
 
         # B1 — a live publish of a cohort video: creates + records the playlist, marks the video, event
         v1 = await _mkvideo("m1-shorts")
         pub = _FakePublisher(returns="PL_LIVE")
-        await _place_in_cohort_playlist(conn, pub, channel=ch, video=v1,
-                                        result=_result("live", "YTVID1"), job=job, approval=approval)
+        await _place_in_cohort_playlist(conn, pub, notif, channel=ch, video=v1,
+                                        result=_result("live", "YTVID1"), job=job, approval=approval,
+                                        chat_id=1)
         stored = await repo.playlists.get(conn, ch["id"], "m1-shorts")
         v1r = await repo.videos.get(conn, v1["id"])
         check("live publish calls the publisher once", len(pub.calls) == 1)
@@ -175,26 +186,30 @@ async def part_b():
         check("the video is marked placed (cohort_playlist_id set)",
               v1r["cohort_playlist_id"] == "PL_LIVE")
         check("a cohort_playlist_added event is logged", await _events(conn, job["id"], "cohort_playlist_added") == 1)
+        check("a SUCCESSFUL placement raises no alert", notif.alerts == [])
 
         # B2 — a SECOND video in the SAME cohort: reuses the ONE playlist (existing id passed through)
         v2 = await _mkvideo("m1-shorts")
         pub2 = _FakePublisher(returns="PL_LIVE")
-        await _place_in_cohort_playlist(conn, pub2, channel=ch, video=v2,
-                                        result=_result("live", "YTVID2"), job=job, approval=approval)
+        await _place_in_cohort_playlist(conn, pub2, notif, channel=ch, video=v2,
+                                        result=_result("live", "YTVID2"), job=job, approval=approval,
+                                        chat_id=1)
         check("same-cohort second video reuses the existing playlist (no re-create)",
               len(pub2.calls) == 1 and pub2.calls[0]["existing"] == "PL_LIVE")
 
         # B3 — idempotency: a repeat publish of an ALREADY-placed video does nothing
         pub3 = _FakePublisher(returns="PL_LIVE")
-        await _place_in_cohort_playlist(conn, pub3, channel=ch, video=v1r,
-                                        result=_result("live", "YTVID1"), job=job, approval=approval)
+        await _place_in_cohort_playlist(conn, pub3, notif, channel=ch, video=v1r,
+                                        result=_result("live", "YTVID1"), job=job, approval=approval,
+                                        chat_id=1)
         check("already-placed video is skipped (no second insert)", pub3.calls == [])
 
         # B4 — a DRY RUN records nothing (publisher returns None)
         v4 = await _mkvideo("m1-shorts")
         dry = _FakePublisher(returns=None)
-        await _place_in_cohort_playlist(conn, dry, channel=ch, video=v4,
-                                        result=_result("dry_run", None), job=job, approval=approval)
+        await _place_in_cohort_playlist(conn, dry, notif, channel=ch, video=v4,
+                                        result=_result("dry_run", None), job=job, approval=approval,
+                                        chat_id=1)
         v4r = await repo.videos.get(conn, v4["id"])
         # dry_run result has no youtube_video_id → the publisher is never even called
         check("dry run does not place the video", dry.calls == [] and v4r["cohort_playlist_id"] is None)
@@ -202,17 +217,21 @@ async def part_b():
         # B5 — a video with NO cohort is skipped
         v5 = await _mkvideo(None)
         pub5 = _FakePublisher(returns="PL_LIVE")
-        await _place_in_cohort_playlist(conn, pub5, channel=ch, video=v5,
-                                        result=_result("live", "YTVID5"), job=job, approval=approval)
+        await _place_in_cohort_playlist(conn, pub5, notif, channel=ch, video=v5,
+                                        result=_result("live", "YTVID5"), job=job, approval=approval,
+                                        chat_id=1)
         check("a video with no cohort is skipped", pub5.calls == [])
+        check("no alert from any of the no-op paths (dry-run / no-cohort / idempotent)",
+              notif.alerts == [])
 
-        # B6 — a publisher failure is LOGGED, never raised (the publish already succeeded)
+        # B6 — a publisher failure is LOGGED + ALERTED, never raised (the publish already succeeded)
         v6 = await _mkvideo("m1-longform")
         boom = _FakePublisher(raises=True)
         raised = False
         try:
-            await _place_in_cohort_playlist(conn, boom, channel=ch, video=v6,
-                                            result=_result("live", "YTVID6"), job=job, approval=approval)
+            await _place_in_cohort_playlist(conn, boom, notif, channel=ch, video=v6,
+                                            result=_result("live", "YTVID6"), job=job, approval=approval,
+                                            chat_id=1)
         except Exception:  # noqa: BLE001
             raised = True
         v6r = await repo.videos.get(conn, v6["id"])
@@ -220,6 +239,8 @@ async def part_b():
         check("the failure is recorded as cohort_playlist_failed",
               await _events(conn, job["id"], "cohort_playlist_failed") == 1)
         check("a failed placement leaves the video unmarked", v6r["cohort_playlist_id"] is None)
+        check("the failure ALERTS Banks at the time (one alert, names the DB fallback)",
+              len(notif.alerts) == 1 and "videos.cohort" in notif.alerts[0])
     finally:
         # self-clean: remove the temp rows this verify created
         await conn.execute("DELETE FROM events WHERE job_id=%s", [job["id"]])

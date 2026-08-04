@@ -45,7 +45,21 @@ in production. Don't flip it as a build step.
 
 ## What REMAINS in M1
 1. **Item 6 — live PUBLISH of a Short** (needs force-ssl re-auth + Banks's tap). Nothing published yet.
-   This is the FIRST live exercise of the cohort playlist write below (dry-run is a no-op).
+   This is the FIRST live exercise of the cohort playlist write below (dry-run is a no-op). When it
+   runs live, watch for a `cohort_playlist_failed` alert (see below) — that's the only way the marker
+   can go missing, and it now tells you at the time.
+
+## Cohort marker durability (folded into item 6, 2026-08-04)
+The cohort playlist is **best-effort and does NOT raise** (a marker failure must never fail the
+already-irreversible publish). But silence was the trap: a failed placement meant the video went
+public, the DB said published, and the YouTube-side marker was absent — discovered eight weeks later
+when the Analytics pull found members missing. So `_place_in_cohort_playlist` now **alerts Banks at the
+time** on `cohort_playlist_failed` (Telegram `notify`), and the alert names the fallback. **The
+`videos.cohort` column is the durable source of truth** — the YouTube playlist is a convenience mirror
+for the Analytics pull, not the record. If a placement is ever missed, the video is unmarked
+(`cohort_playlist_id` NULL), so a retry re-adds it, and `videos.cohort` reconstructs the cohort
+regardless. verify_cohort_playlist asserts the alert fires on failure and stays silent on every success
+/ no-op path.
 
 ## Item 2 — DONE (unlisted cohort playlist writes)
 `youtube.py` gained `add_to_cohort_playlist` / `_add_to_cohort_playlist` (the ONLY `playlists.insert` +
