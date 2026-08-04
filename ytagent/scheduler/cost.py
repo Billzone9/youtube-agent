@@ -30,6 +30,10 @@ _RETAKE_FACTOR = 1.15
 # Description + tags LLM, spent AFTER the gate (step 7). The SCRIPT LLM is already sunk by gate time.
 # A conservative fixed estimate toward Sonnet description authoring (job 155 actual ≈ £0.008).
 _DESC_LLM_GBP = 0.02
+# VISION (Haiku) per content-gate CHECK — derived: a film ≈ £0.72 over ~42 checks → ~£0.017/check. This
+# is the DOMINANT cost of a credit-light Short (footage + reused bed = ~£0 ElevenLabs), so the Short
+# estimate must carry it or estimate_vs_actual under-counts Shorts ~4× (the film estimator's old error).
+_VISION_GBP_PER_CHECK = 0.017
 
 
 @dataclass(frozen=True)
@@ -98,4 +102,31 @@ def estimate_production_cost(script, channel: dict, *, sfx_specs=None) -> CostEs
         music_credits=round(music_credits), music_gbp=round(music_gbp, 4),
         sfx_credits=round(sfx_credits), sfx_gbp=round(sfx_gbp, 4),
         llm_gbp=round(llm_gbp, 4), retake_factor=_RETAKE_FACTOR,
+        total_gbp=round(total_gbp, 4), by_provider=by_provider)
+
+
+def estimate_short_cost(*, n_target: int = 3, bed_generated: bool = False, bed_seconds: float = 30.0,
+                        hook_chars: int = 0) -> CostEstimate:
+    """Estimate a CREDIT-LIGHT Short — the cost ratio INVERTS vs a film: ElevenLabs ≈ 0 (reused bed, no
+    voice), the DOMINANT term is VISION (Anthropic). Vision is estimated at ~2× n_target checks (a modest
+    over-estimate for gate-rejects), mapped onto `llm_gbp` (vision + description) since Haiku vision IS an
+    Anthropic cost. Music credits only if a fresh bed is generated; TTS only if a hook is voiced (default
+    none). This exists so the spend gate + estimate_vs_actual shape a Short correctly instead of quoting
+    the film's fixed ~£0.02 LLM and under-counting the Short ~4×."""
+    vision_gbp = n_target * 2 * _VISION_GBP_PER_CHECK
+    llm_gbp = vision_gbp + _DESC_LLM_GBP
+    tts_chars = hook_chars
+    tts_gbp = tts_chars * _CREDITS_PER_CHAR * _GBP_PER_CREDIT
+    music_credits = (bed_seconds * _CREDITS_PER_SEC * _RETAKE_FACTOR) if bed_generated else 0.0
+    music_gbp = music_credits * _GBP_PER_CREDIT
+    total_gbp = tts_gbp + music_gbp + llm_gbp
+    by_provider = (
+        ProviderCost("elevenlabs_tts", round(tts_chars * _CREDITS_PER_CHAR), round(tts_gbp, 4)),
+        ProviderCost("elevenlabs_music", round(music_credits), round(music_gbp, 4)),
+        ProviderCost("anthropic", 0.0, round(llm_gbp, 4)),      # vision + description — the dominant term
+    )
+    return CostEstimate(
+        tts_chars=tts_chars, tts_gbp=round(tts_gbp, 4),
+        music_credits=round(music_credits), music_gbp=round(music_gbp, 4),
+        sfx_credits=0.0, sfx_gbp=0.0, llm_gbp=round(llm_gbp, 4), retake_factor=_RETAKE_FACTOR,
         total_gbp=round(total_gbp, 4), by_provider=by_provider)

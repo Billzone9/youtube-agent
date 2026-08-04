@@ -16,12 +16,14 @@ import asyncio
 import json
 import os
 import shutil
-from dataclasses import asdict
+from dataclasses import asdict, replace as dc_replace
 
 from . import repo
 from .audio_design import generate_audio, plan_cues
 from .assembly import assemble_spec, bind_edit_spec
 from .assembly import qc as aqc
+from .assembly.beds import pick_bed
+from .assembly.binder import bind_short_spec
 from .assembly.density import assert_visual_density, min_clips, target_clips
 from .assembly.ffmpeg import probe
 from .assembly.spec import MusicCue, Sfx, Target
@@ -31,7 +33,7 @@ from .metadata.description import generate_description
 from .metadata.llm_writer import LLMWriter
 from .metadata.research import UnavailableResearch
 from .orchestrator import assembly_ping_text, submit_video_for_approval
-from .scheduler.cost import estimate_production_cost
+from .scheduler.cost import estimate_production_cost, estimate_short_cost
 from .sourcing import NoMatch, source_clips_for_brief, source_film
 from .tts import TTSQuotaError, TTSScopeError
 
@@ -785,3 +787,79 @@ async def remake_from_narration(conn, notifier, *, channel, topic, script, narra
 def spec_slug(title: str) -> str:
     import re
     return (re.sub(r"[^a-z0-9]+", "-", (title or "video").lower()).strip("-") or "video")[:48]
+
+
+_SHORT_LUFS_TARGET, _SHORT_LUFS_TOL = -14.0, 2.0
+
+
+async def produce_short(conn, notifier, *, channel, subject, brief, providers, llm_provider, usage_sink,
+                        publisher, chat_id, duration_s: int = 20, n_target: int = 3,
+                        per_job_threshold_gbp=None, enforce_ceiling: bool = False) -> dict:
+    """Produce ONE credit-light Short end to end (footage + attested reused bed, NO voice) → the Telegram
+    card. The cost IS the vision (bounded single-beat sourcing, cross-video exclude); ElevenLabs ≈ 0.
+    Straight-through — a Short is cheap enough to just re-run, so no resumable state machine. Publishing
+    stays the human gate; the publish path asserts Short-ness (assert_short_conditions)."""
+    pricing = await repo.ledger.get_llm_pricing(conn)
+    async with conn.transaction():
+        # stage stays NULL (the fine-grained pipeline-stage enum has no 'short'); FORMAT lives on the payload
+        job = await repo.jobs.create(conn, channel_id=channel["id"], type="produce", status="assembling",
+                                     payload={"topic": subject, "format": "short"})
+        await record_event(conn, "produce_started", message=f"produce short '{subject}'",
+                           channel_id=channel["id"], job_id=job["id"])
+
+    # SPEND GATE (4→5) — a SHORT-shaped estimate (vision-dominant; EL ≈ 0). Persisted for estimate_vs_actual.
+    est = estimate_short_cost(n_target=n_target, bed_generated=False)
+    await record_event(conn, "spend_estimate",
+                       message=f"short est £{est.total_gbp:.3f} (vision-dominant; EL £0 reused bed)",
+                       channel_id=channel["id"], job_id=job["id"], data=asdict(est))
+    if per_job_threshold_gbp is not None and est.total_gbp > float(per_job_threshold_gbp):
+        raise SpendGatePause("per_job", est.total_gbp, limit=float(per_job_threshold_gbp), breakdown=asdict(est))
+    if enforce_ceiling:
+        bud = await budget_status(conn)
+        if float(bud["month_spend_gbp"]) + est.total_gbp > float(bud["ceiling_gbp"]):
+            raise SpendGatePause("ceiling", est.total_gbp, limit=float(bud["ceiling_gbp"]),
+                                 mtd=float(bud["month_spend_gbp"]), breakdown=asdict(est))
+
+    bed = pick_bed(job["id"])                       # rotate by job id → consecutive Shorts differ
+    if bed is None:
+        await repo.jobs.set_status(conn, job["id"], "failed", error="no attested bed in the library")
+        raise ProductionError("no attested bed — seed assets/beds/ + beds-manifest.json")
+
+    # SOURCE — bounded single-beat path, cross-video exclude; vision is the spend
+    used = await repo.sourcing.used_asset_ids(conn, channel["id"])
+    got = await source_clips_for_brief(
+        conn, providers, brief=brief, brief_ref="short-1", approx_seconds=duration_s, target_fmt="9:16",
+        target_w=1080, target_h=1920, cache_dir="assets/sourced", channel_id=channel["id"],
+        job_id=job["id"], llm=llm_provider, n_target=n_target, n_min=1, exclude_ids=used, vision=True,
+        subject=subject)
+    await _drain_llm(conn, usage_sink, pricing, channel_id=channel["id"], job_id=job["id"])
+    if isinstance(got, NoMatch):
+        await repo.jobs.set_status(conn, job["id"], "failed", error=f"sourcing: {got.reason}")
+        raise ProductionError(f"short sourcing: {got.reason}")
+
+    # BIND + ASSEMBLE (Shorts density + noise gates) → assert LUFS (loudnorm drifts on short content)
+    spec = bind_short_spec(got, bed=bed, duration_s=duration_s, title=f"{subject} short").for_format("9:16")
+    root = os.path.abspath(f"assets/produced/short-{job['id']}")
+    os.makedirs(root, exist_ok=True)
+    dst = os.path.join(root, "short.mp4")
+    result = await asyncio.to_thread(assemble_spec, spec, dst=dst, provenance_ref="sourced_assets", workdir=root)
+    lufs = float(result.qc.get("loudness_lufs") or 0.0)
+    if abs(lufs - _SHORT_LUFS_TARGET) > _SHORT_LUFS_TOL:
+        await repo.jobs.set_status(conn, job["id"], "failed", error=f"LUFS {lufs} drift")
+        raise ProductionError(f"short master {lufs} LUFS drifts past {_SHORT_LUFS_TARGET}±{_SHORT_LUFS_TOL}")
+
+    # DESCRIBE (+ #Shorts — the publish gate requires it) → SUBMIT to the card
+    desc = generate_description({"topic": subject, "title": f"Wild {subject.title()}", "facts": "",
+                                 "contents": None}, channel, UnavailableResearch(), LLMWriter(llm_provider))
+    if "#shorts" not in (desc.description or "").lower():
+        desc = dc_replace(desc, description=(desc.description.rstrip() + "\n\n#Shorts"))
+    await _drain_llm(conn, usage_sink, pricing, channel_id=channel["id"], job_id=job["id"])
+    sub = await submit_video_for_approval(
+        conn, notifier, channel=channel, video_meta=result.qc, description=desc, chat_id=chat_id,
+        publish_mode=publisher.mode, metadata_source="research_writer")
+    await notifier.notify(chat_id=chat_id, text=assembly_ping_text(
+        f"{channel['slug']}/short", ok=True, render_s=result.duration_render_s, qc=result.qc,
+        noise_ok=result.noise_gate.ok if result.noise_gate else None)
+        + f"\nSubmitted a Short (<b>{subject}</b>) for approval ({publisher.mode}). #Shorts")
+    return {"ok": True, "job_id": job["id"], "result": result, "description": desc, "submit": sub,
+            "clips": len(got), "estimate_gbp": est.total_gbp}

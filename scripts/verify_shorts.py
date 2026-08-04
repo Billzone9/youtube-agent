@@ -120,6 +120,18 @@ def main():
     check("reused-bed Short music cost is 0 credits", reused == 0)
     check("fresh 30s bed ≈ 500–540 credits", 500 <= generated_30s <= 540, f"{generated_30s:.0f}")
 
+    print("[4b] estimate_short_cost is vision-DOMINANT (ratio inverts vs a film)")
+    from ytagent.scheduler.cost import estimate_short_cost
+    e = estimate_short_cost(n_target=3, bed_generated=False)
+    prov = {p.provider: p for p in e.by_provider}
+    check("reused-bed Short: 0 ElevenLabs credits (gate trivially passes)", e.elevenlabs_credits == 0)
+    check("Anthropic (vision+desc) is the dominant term",
+          prov["anthropic"].gbp > prov["elevenlabs_tts"].gbp + prov["elevenlabs_music"].gbp,
+          f"£{prov['anthropic'].gbp}")
+    g = estimate_short_cost(n_target=3, bed_generated=True, bed_seconds=30)
+    check("generated-bed Short carries ~520 music credits (credit gate checks these)",
+          500 <= g.music_credits <= 540, f"{g.music_credits}")
+
     print("\n" + ("ALL PASSED" if _fail == 0 else f"{_fail} FAILED"))
     sys.exit(1 if _fail else 0)
 
