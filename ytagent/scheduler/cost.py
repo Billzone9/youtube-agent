@@ -113,6 +113,10 @@ def estimate_short_cost(*, n_target: int = 3, bed_generated: bool = False, bed_s
     Anthropic cost. Music credits only if a fresh bed is generated; TTS only if a hook is voiced (default
     none). This exists so the spend gate + estimate_vs_actual shape a Short correctly instead of quoting
     the film's fixed ~£0.02 LLM and under-counting the Short ~4×."""
+    # DELIBERATE over-padding: 2× n_target checks. The gate must err HIGH, and one live run (job 521: 4
+    # checks for 3 clips ≈ 1.3×) is NOT enough to tune on — do NOT reduce this on a single data point. If
+    # Shorts reliably land near 1.3×, tighten AFTER ~5 real runs (BACKLOG). Until then estimate_vs_actual
+    # will show a ~2× Short ratio BY DESIGN, not as a defect (its footnote says so).
     vision_gbp = n_target * 2 * _VISION_GBP_PER_CHECK
     llm_gbp = vision_gbp + _DESC_LLM_GBP
     tts_chars = hook_chars

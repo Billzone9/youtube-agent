@@ -279,7 +279,8 @@ async def _submit(conn, notifier, *, channel, script, result, design, llm_provid
     await _drain_llm(conn, usage_sink, pricing, channel_id=channel["id"], job_id=job_id)
     sub = await submit_video_for_approval(
         conn, notifier, channel=channel, video_meta=result.qc, description=desc,
-        chat_id=chat_id, publish_mode=publisher.mode, metadata_source="research_writer")
+        chat_id=chat_id, publish_mode=publisher.mode, metadata_source="research_writer",
+        cohort="m1-longform")
     await notifier.notify(chat_id=chat_id, text=assembly_ping_text(
         f"{channel['slug']}/produce", ok=True, render_s=result.duration_render_s, qc=result.qc,
         noise_ok=result.noise_gate.ok if result.noise_gate else None)
@@ -856,7 +857,7 @@ async def produce_short(conn, notifier, *, channel, subject, brief, providers, l
     await _drain_llm(conn, usage_sink, pricing, channel_id=channel["id"], job_id=job["id"])
     sub = await submit_video_for_approval(
         conn, notifier, channel=channel, video_meta=result.qc, description=desc, chat_id=chat_id,
-        publish_mode=publisher.mode, metadata_source="research_writer")
+        publish_mode=publisher.mode, metadata_source="research_writer", cohort="m1-shorts")
     await notifier.notify(chat_id=chat_id, text=assembly_ping_text(
         f"{channel['slug']}/short", ok=True, render_s=result.duration_render_s, qc=result.qc,
         noise_ok=result.noise_gate.ok if result.noise_gate else None)

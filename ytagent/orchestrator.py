@@ -155,7 +155,7 @@ async def submit_publish_for_approval(
 
 async def submit_video_for_approval(
     conn, notifier: "Notifier", *, channel: dict, video_meta: dict, description: "Description",
-    chat_id: str, publish_mode: str = "dry_run", metadata_source: str = "manual",
+    chat_id: str, publish_mode: str = "dry_run", metadata_source: str = "manual", cohort: str | None = None,
 ) -> dict:
     # Public text comes from the authored Description (title/description/tags); video_meta is the
     # INTERNAL technical payload only. The two are joined here — the internal one never reaches a
@@ -168,7 +168,8 @@ async def submit_video_for_approval(
         )
         video = await repo.videos.create(
             conn, channel_id=channel["id"], job_id=job["id"], status="awaiting_approval",
-            title=pub["title"], description=pub["description"], tags=Jsonb(pub["tags"]), **video_meta,
+            title=pub["title"], description=pub["description"], tags=Jsonb(pub["tags"]),
+            cohort=cohort, **video_meta,
         )
         meta = await repo.metadata.create_version(
             conn, video_id=video["id"], channel_id=channel["id"], title=pub["title"],

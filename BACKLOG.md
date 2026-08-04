@@ -41,6 +41,11 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
   Per-channel opt-in; YouTube stays primary. See `PLAN_MARKETING_ARC.md`.
 
 ## Marketing arc — carry-forward (small entries, fold into the arc plan; 2026-08-04)
+- `[ ]` **Recalibrate the Short vision multiplier after ~5 real runs.** `estimate_short_cost` pads vision
+  at 2× n_target checks (err-high for the gate). The first live run (job 521: 4 checks / 3 clips ≈ 1.3×)
+  is NOT enough to tune on. If Shorts reliably land near 1.3×, drop the multiplier from 2× toward ~1.4×
+  once ~5 runs exist — until then estimate_vs_actual shows a ~2× Short ratio BY DESIGN (its footnote says
+  so), not a defect. Do NOT tune on one data point.
 - `[ ]` **`source_clips_for_brief` lacks the vision verdict cache that `source_film` has.** The single-beat
   path (used by Shorts + `_source_all_beats`) re-verifies + re-PAYS vision on any clip it re-sees, whereas
   `source_film` consults `repo.vision_cache` (source, asset_id, subject) and pays once. Vision is now the
