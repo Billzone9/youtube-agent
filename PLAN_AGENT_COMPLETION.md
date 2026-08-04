@@ -68,68 +68,93 @@ and the noise gate are both correct) — recorded here because "verify, don't as
 
 ---
 
-## 3. Proposed sequence
+## 3. Proposed sequence — APPROVED 2026-08-04 with three adjustments (folded in below)
+Banks's adjustments: (1) dashboard moves to LAST — it's a *view of* the agent, not part of it, and it
+would display components that don't exist yet; (2) Phase 4 must justify each component — build it only
+if "done" is definable WITHOUT running it, else defer with a named trigger (four honest defers beat four
+unverifiable capabilities); (3) **D1 goes first** — a verify suite that pollutes production state is what
+armed 32 publish cards; that is a latent accidental-upload path, not hygiene. Make **hermetic-by-default
+the standard for every new verify.**
 
 ### Phase 0 — Correctness & trust *(make the code provably work first)*
-D1 self-cleaning verifies (kill the debris at the source) · D2 produce-job terminal status + resume-query
-fix · D3 audio-design completeness guard · D5 CI wrapper (`make health` on an ephemeral Postgres +
-`pyproject.toml`). D4 either fixed or explicitly routed through the resumable path.
-*Why first:* it's Banks's stated priority, it's cheap, and every later component lands on a trustworthy
-base behind a green gate.
+- **D1 FIRST, before anything else.** Every verify self-cleans (no production-state debris), and
+  hermetic-by-default becomes a written, enforced standard for all new verifies — because a polluting
+  test suite is an accidental-upload path, not hygiene. This is the literal first task.
+- Then: D2 produce-job terminal status + resume-query fix · D3 audio-design completeness guard · D5 CI
+  wrapper (`make health` on an ephemeral Postgres + `pyproject.toml`). D4 fixed or explicitly routed
+  through the resumable path.
+*Why first:* Banks's stated priority; cheap; every later component lands on a trustworthy base + green gate.
 
-### Phase 1 — The control surface *(see & understand what exists)*
-B5 dashboard **skeleton**, read-only: channels · jobs · cost ledger + ROI · approvals queue · audit
-timeline · playbooks. No new backend — it surfaces the rich data already captured.
-*Why here:* it's the "be in control and understand how it works" surface you asked for, and it makes
-every later component observable as it lands.
-
-### Phase 2 — Intelligence that needs no publishing *(verifiable now; improves what's PRODUCED)*
-#12 competitor & trend analysis (feeds playbook + dashboard) · #1 A1 grounded research (real facts into
-scripts + Layer-1 descriptions) · B8 safety/compliance **consolidation** (cross-video variation
-enforcement, YMYL handling, disclosure/claim-safe as one auditable layer).
+### Phase 1 — Intelligence that needs no publishing *(verifiable now; improves what's PRODUCED)*
+#12 competitor & trend analysis (feeds playbook) · #1 A1 grounded research (real facts into scripts +
+Layer-1 descriptions) · B8 safety/compliance **consolidation** (cross-video variation enforcement, YMYL
+handling, disclosure/claim-safe as one auditable layer).
 *Why here:* all verifiable now, all raise quality/safety of output without publishing anything.
 
-### Phase 3 — General platform + analytics *(build; verify on assets that are ALREADY public)*
+### Phase 2 — General platform + analytics *(build; verify on assets that are ALREADY public)*
 #2 B1 onboarding interview (per-channel config → unlocks channel #2) · #3 B4 learning loop: add
 `youtube.analytics.readonly` (**security review on `youtube.py` + fresh consent**), analytics client,
 `video_metrics` write path, correlation — **verified by pulling REAL analytics for the two already-public
 films, no new publishing.**
 *Why here:* B4 is exercisable now via the existing public videos; onboarding makes it truly multi-channel.
 
-### Phase 4 — Build-now / exercise-later *(capability built + offline-verified; output parked)*
-#6 B7: fix `revenue_ledger` (add `video_id` attribution) + product/affiliate discovery (verifiable now);
-real revenue tracking parked until monetisation · #9 MLA dubbing · #10 social cross-posting · #11
-comment/community — each built and offline-verified; **exercise stays behind the publishing gate.**
+### Phase 3 — Monetisation capability *(only the verifiable-now parts; rest deferred with a trigger)*
+#6 B7, split honestly:
+- **BUILD NOW (verifiable):** product/affiliate **discovery** — given a niche, find claim-safe fitting
+  products, rank, log provenance; "done" = offline test on a fixture catalog + a real query returns
+  ranked candidates. And the `revenue_ledger` **schema fix** (add `video_id` attribution) + write path,
+  verified with fixture/manual rows.
+- **DEFER (named trigger):** real revenue INGESTION (AdSense/affiliate/sponsorship figures). Trigger:
+  *when the channel is monetised (AdSense approved) or an affiliate program is joined* — there is no
+  revenue data to prove against until then.
 
-### Deferred indefinitely
-**B6 marketing / promotion** — the arc just stopped; its payoff is publishing/ROAS. Resume only when
-the build is done AND Banks decides to publish.
+### Phase 4 — The control surface *(LAST — a view built once there's something to show)*
+B5 dashboard **skeleton**, read-only: channels · jobs · cost ledger + ROI · approvals queue · audit
+timeline · playbooks · trend signals · learning-loop output. Built last, so it surfaces components that
+actually exist.
+*Why last (Banks's call):* the dashboard is a window onto the agent, not the agent; finishing the agent
+comes first.
+
+### Deferred with named triggers *(honest defer beats unverifiable capability — Banks's adjustment 2)*
+Each states what would make it real; none is built now because none can be verified without publishing/
+engagement that is currently parked.
+- **B6 marketing / promotion (#5).** Trigger: *build complete AND Banks decides to publish* (payoff is
+  publishing/ROAS — the arc just stopped).
+- **MLA multilingual dubbing (#9).** Trigger: *audience data justifies 1–2 launch languages AND
+  publishing resumes.* Languages are meant to be data-driven (roadmap); at 0 subs there is no data, and
+  the multi-track attach needs a real `videos.insert`. Premature to build blind.
+- **Social cross-posting (#10).** Trigger: *a channel opts in to a specific platform AND publishing
+  resumes.* Wildlife is YouTube-only by default; no channel wants it yet, and a post can't be verified
+  without posting. Nothing to build against.
+- **Comment & community management (#11).** Trigger: *published videos accumulate real comments (needs
+  the comment/analytics scope) — i.e. after publishing resumes.* At ~0 engagement there are no comments
+  to read, draft against, or moderate; a drafter with no real inputs is unprovable.
+
+*Note:* "finishing the agent" therefore means — everything verifiable-now is BUILT and PROVEN; everything
+that inherently needs publishing/engagement is DEFERRED with an explicit trigger tied to the publish
+decision. That is the honest definition of done under the build-first discipline.
 
 ---
 
 ## 4. Honest estimate (×3-corrected)
 | Phase | Focused working blocks |
 |---|---|
-| 0 — correctness & trust | 2–3 |
-| 1 — dashboard skeleton | 2–4 |
-| 2 — intelligence (×3 components) | 4–6 |
-| 3 — onboarding + B4 (incl. scope/consent/review) | 4–6 |
-| 4 — build-park (×4 capabilities) | 5–8 |
-| **Total** | **~17–27** |
+| 0 — correctness & trust (D1 first) | 2–3 |
+| 1 — intelligence (×3 components) | 4–6 |
+| 2 — onboarding + B4 (incl. scope/consent/review) | 4–6 |
+| 3 — monetisation capability (discovery + ledger fix) | 2–3 |
+| 4 — dashboard skeleton (last) | 2–4 |
+| **Total** | **~14–22** |
 
-Biggest uncertainties: dashboard scope (skeleton vs. full control surface); analytics-scope consent
-friction + its security review; how deep B8 variation enforcement goes. I'll re-estimate each phase at
-its start with the ×3 lens.
+(Lower than the first pass: three Phase-4 capabilities became honest defers instead of build work.)
+Biggest uncertainties: analytics-scope consent friction + its security review; how deep B8 variation
+enforcement goes; dashboard scope. I'll re-estimate each phase at its start with the ×3 lens.
 
 ---
 
-## 5. Decisions I need from you (not now-blocking, but they shape phases)
-1. **Approve this sequence** (or reorder). I recommend Phase 0 first regardless.
-2. **Dashboard scope** — start with the read-only skeleton (my recommendation) or aim fuller?
-3. **Analytics scope** — when we reach Phase 3, approve adding `youtube.analytics.readonly` (new consent
-   + a `youtube.py` breadth review). Flagging now so it's not a surprise.
-4. **Confirm the defers** — B6 indefinite; exercise of #9/#10/#11 parked behind publishing. Say if any
-   of those matters sooner.
-
-I disagree with nothing material in the brief except the stale items in §1 above; its core ask —
-correctness first, then build, defaulting defects to backlog — is right and is what this plan does.
+## 5. Decisions already made / still open
+- **Sequence — APPROVED** (with the three adjustments folded in above). Start Phase 0 at D1.
+- **Dashboard scope** — read-only skeleton, built LAST. (Open: whether to go fuller once we're there.)
+- **Analytics scope** — Phase 2 will need approval to add `youtube.analytics.readonly` (new consent + a
+  `youtube.py` breadth review). Flagged now; not yet actioned.
+- **Defers confirmed** — B6 (trigger: publish decision), MLA / social / comments (triggers above).
