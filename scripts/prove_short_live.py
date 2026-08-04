@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+from dataclasses import replace
 
 import psycopg
 from psycopg.rows import dict_row
@@ -89,6 +90,10 @@ async def run():
     desc = generate_description({"topic": _SUBJECT, "title": f"Wild {_SUBJECT.title()}", "facts": "",
                                  "contents": None}, ch, UnavailableResearch(), LLMWriter(llm))
     await _drain_llm(conn, sink, pricing, channel_id=ch["id"], job_id=job["id"])
+    # a Short must carry #Shorts for YouTube to classify it (the publish gate asserts this) — append it
+    # to the viewer-facing description (a legit hashtag, not an internal artifact). produce_short does the same.
+    if "#shorts" not in (desc.description or "").lower():
+        desc = replace(desc, description=(desc.description.rstrip() + "\n\n#Shorts"))
     # metadata_source is WHO authored the text (research_writer — an allowed value); the SHORT/format
     # distinction lives on the job payload (format=short), not here (video_metadata.source is constrained).
     sub = await submit_video_for_approval(

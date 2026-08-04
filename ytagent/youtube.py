@@ -70,6 +70,37 @@ def _expected_channel_id(channel: dict) -> str | None:
     return ((channel.get("config") or {}).get("youtube_channel_id")) or None
 
 
+_SHORT_MAX_S = 60.0
+
+
+class ShortConditionError(RuntimeError):
+    """A 9:16 upload fails the conditions YouTube CLASSIFIES a Short by (vertical aspect + ≤60s + a
+    #Shorts tag in the public text). Publishing it anyway files it as an ordinary vertical video, which
+    silently invalidates the Shorts-cohort experiment. Asserted the way channel_id is — not assumed."""
+
+
+def assert_short_conditions(video: dict, title: str, description: str) -> None:
+    """For a Short-shaped (9:16) upload, REFUSE unless it will actually classify as a Short. No-op for
+    16:9 long-form. The upload does not infer Short-ness for us — aspect + duration + #Shorts are the
+    signals, and only aspect is inherent to the file, so we assert all three at the publish boundary."""
+    if video.get("format") != "9:16":
+        return
+    w, h = int(video.get("width") or 0), int(video.get("height") or 0)
+    dur = float(video.get("duration_s") or 0.0)
+    text = f"{title or ''}\n{description or ''}".lower()
+    problems = []
+    if not (h > w):
+        problems.append(f"not vertical ({w}x{h})")
+    if not (0 < dur <= _SHORT_MAX_S):
+        problems.append(f"duration {dur:.1f}s outside (0, {_SHORT_MAX_S:.0f}]s")
+    if "#shorts" not in text:
+        problems.append("no #Shorts in title/description")
+    if problems:
+        raise ShortConditionError(
+            "9:16 upload fails Short classification (" + "; ".join(problems) + ") — YouTube would file "
+            "it as an ordinary vertical video, not a Short. Refusing (the cohort experiment needs Shorts).")
+
+
 def _client(creds: Credentials):
     socket.setdefaulttimeout(_SOCKET_TIMEOUT)
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
@@ -124,6 +155,7 @@ class YouTubePublisher:
             raise RuntimeError("privacyStatus not locked to private — refusing to upload")
         snip = body["snippet"]
         assert_no_internal_artifacts(snip["title"], snip["description"], *snip.get("tags", []))
+        assert_short_conditions(video, snip["title"], snip["description"])   # 9:16 must classify as a Short
 
         youtube = _client(creds)
         _preflight_channel(youtube, expected)                  # cheap pre-check when readable
@@ -170,6 +202,7 @@ class YouTubePublisher:
         body = build_public_update_body(video, channel)        # clean snippet + privacyStatus=public
         snip = body["snippet"]
         assert_no_internal_artifacts(snip["title"], snip["description"], *snip.get("tags", []))
+        assert_short_conditions(video, snip["title"], snip["description"])   # 9:16 must classify as a Short
 
         resource = await asyncio.to_thread(
             self._update, creds, yt_id, body, expected, {yt_id})   # own-id set = this video only
