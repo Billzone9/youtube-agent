@@ -134,3 +134,38 @@ def estimate_short_cost(*, n_target: int = 3, bed_generated: bool = False, bed_s
         music_credits=round(music_credits), music_gbp=round(music_gbp, 4),
         sfx_credits=0.0, sfx_gbp=0.0, llm_gbp=round(llm_gbp, 4), retake_factor=_RETAKE_FACTOR,
         total_gbp=round(total_gbp, 4), by_provider=by_provider)
+
+
+# --- Phase 1 LLM-spend estimators (PLAN_PHASE1_COSTS.md) --------------------------------------------
+# Tier $/Mtok, MIRRORING platform_settings.llm_pricing (the DB table is authoritative; the reconciler
+# calibrates against settled Anthropic spend). Kept here so an estimate is PURE/offline for the gate.
+_USD_PER_MTOK = {"cheap": (1.0, 5.0), "quality": (3.0, 15.0), "premium": (15.0, 75.0)}   # (in, out)
+_USD_GBP = 0.79
+_WEB_SEARCH_USD = 0.01          # Anthropic server-side web search, per search
+
+
+def estimate_llm_gbp(*, input_tokens: int, output_tokens: int, tier: str = "quality",
+                     web_searches: int = 0) -> float:
+    """Tokens (+ optional web searches) → GBP at a tier's price. The one place new LLM features get a
+    cost BEFORE their first run, so no unattended, un-estimated spend reaches the ledger by surprise."""
+    pin, pout = _USD_PER_MTOK[tier]
+    usd = (input_tokens / 1e6) * pin + (output_tokens / 1e6) * pout + web_searches * _WEB_SEARCH_USD
+    return round(usd * _USD_GBP, 4)
+
+
+def estimate_research_cost(*, tier: str = "quality") -> float:
+    """A1 grounded research — ONE per-video pass (assumptions in PLAN_PHASE1_COSTS.md): ~30k in + ~4k out
+    + ~6 web searches. ATTENDED (inside a production run) → folds into estimate_production_cost, no new
+    gate. Sonnet ≈ £0.17/video. Replace the token assumptions with measured actuals after the first runs
+    (as vision was calibrated)."""
+    return estimate_llm_gbp(input_tokens=30_000, output_tokens=4_000, tier=tier, web_searches=6)
+
+
+def estimate_trend_analysis_cost(*, n_competitors: int = 10, videos_each: int = 20,
+                                 tier: str = "quality") -> float:
+    """§14.5 competitor/trend analysis — ONE scheduled run. Input scales with the batch analysed
+    (~80 tok/video of metadata + a fixed prompt/trend overhead); output ~3k. UNATTENDED, scheduled →
+    the spend that needs a PRE-RUN, FAIL-CLOSED gate (not just a ledger row). Sonnet ≈ £0.095 at the
+    default batch. Data fetch is YouTube API quota, not counted here."""
+    input_tokens = 5_000 + n_competitors * videos_each * 80      # prompt/trend overhead + metadata batch
+    return estimate_llm_gbp(input_tokens=input_tokens, output_tokens=3_000, tier=tier)

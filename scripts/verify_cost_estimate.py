@@ -87,6 +87,21 @@ def main():
     check("elevenlabs_credits = tts + music + sfx",
           est_sfx.elevenlabs_credits == est_sfx.tts_chars + est_sfx.music_credits + est_sfx.sfx_credits)
 
+    print("[6] Phase-1 LLM estimators exist BEFORE the features (PLAN_PHASE1_COSTS.md)")
+    # the raw tokens→gbp helper against a hand-computed figure (Sonnet: 1M in + 1M out = £(3+15)*0.79)
+    check("estimate_llm_gbp matches hand-calc",
+          cost.estimate_llm_gbp(input_tokens=1_000_000, output_tokens=1_000_000, tier="quality")
+          == round(18.0 * 0.79, 4), f"£{cost.estimate_llm_gbp(input_tokens=10**6, output_tokens=10**6)}")
+    research = cost.estimate_research_cost()
+    trend = cost.estimate_trend_analysis_cost()
+    check("grounded research ≈ £0.17/video (documented)", 0.15 <= research <= 0.19, f"£{research}")
+    check("trend analysis ≈ £0.095/run (documented)", 0.08 <= trend <= 0.11, f"£{trend}")
+    check("both are non-zero — no un-estimated LLM feature", research > 0 and trend > 0)
+    check("cheaper tier lowers the estimate (tier is honoured)",
+          cost.estimate_research_cost(tier="cheap") < research)
+    check("trend scales with the batch analysed",
+          cost.estimate_trend_analysis_cost(n_competitors=20) > trend)
+
     print("\n" + ("ALL PASSED" if ok else "FAILED"))
     raise SystemExit(0 if ok else 1)
 
