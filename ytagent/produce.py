@@ -7,8 +7,9 @@ TTS spend. The visual-density standard is enforced twice — N-distinct-clip sou
 and `assert_visual_density` gates the bound spec before the render. Steps are autonomous within budget;
 the submit opens the human gate; the private upload happens later in `handle_decision` on approve.
 
-`remake_from_narration` reuses an existing production's narration mp3s (no TTS re-spend) and re-sources
-the visuals to the density standard — the path used to fix a cut whose visuals failed review.
+The scheduler's `run_production` (checkpointed, resumable) is the ONE real production path. The
+pre-agent hand-crank entrypoints (`produce_from_sourced`, `remake_from_narration`) and their scripts
+were removed 2026-08-05 (D4) — dead weight, reachable only from spent one-off scripts, not the agent.
 """
 from __future__ import annotations
 
@@ -300,35 +301,6 @@ async def _submit(conn, notifier, *, channel, script, result, design, llm_provid
         + f"\nSubmitted <b>{script.title}</b> for approval ({publisher.mode}).")
     return desc, sub
 
-
-async def _assemble_and_submit(conn, notifier, *, channel, script, sourced, narration, llm_provider,
-                               usage_sink, pricing, description_exemplar, publisher, chat_id, dst,
-                               workdir, job_id, topic, target_fmt, target_w, target_h,
-                               design=None) -> dict:
-    """Back-compat wrapper (used by produce_from_sourced / remake_from_narration): assemble → submit in
-    one call, recording the `assembled` job status between them, exactly as before the 6b split."""
-    result, spec, density = await _assemble(
-        conn, channel=channel, script=script, sourced=sourced, narration=narration, design=design,
-        dst=dst, workdir=workdir, job_id=job_id, target_fmt=target_fmt, target_w=target_w, target_h=target_h)
-    async with conn.transaction():
-        await repo.jobs.set_status(conn, job_id, "assembled", result={
-            "qc": result.qc, "noise": result.noise, "render_s": result.duration_render_s, "density": density})
-    desc, sub = await _submit(
-        conn, notifier, channel=channel, script=script, result=result, design=design,
-        llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
-        description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, topic=topic,
-        job_id=job_id)
-    async with conn.transaction():   # D2: terminal once submitted (was left at 'assembled' indefinitely)
-        await repo.jobs.set_status(conn, job_id, "produced")
-    return {"ok": True, "job_id": job_id, "script": script, "sourced": sourced, "density": density,
-            "result": result, "description": desc, "submit": sub, "design": design}
-
-
-# --- resumable production state machine (6b) --------------------------------------------------------
-# The production_state dict (persisted in jobs.result['production_state'] + artifacts on disk) lets a
-# crashed/restarted run resume at the first INCOMPLETE stage. Deterministic on-disk paths make the money
-# stages (TTS, music) idempotent: even a crash AFTER generation but BEFORE the checkpoint reloads the
-# artifact instead of re-charging.
 
 def _write_script_json(path: str, script) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -716,93 +688,6 @@ async def produce_video(conn, notifier, *, channel, topic, providers, tts, scrip
         description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id,
         per_job_threshold_gbp=per_job_threshold_gbp, enforce_ceiling=enforce_ceiling,
         key_credit_cap=key_credit_cap, crash_after=crash_after)
-
-
-async def produce_from_sourced(conn, notifier, *, channel, topic, script, sourced, tts, music,
-                               llm_provider, usage_sink, description_exemplar, publisher, chat_id, dst,
-                               workdir, target_fmt="16:9", target_w=1920, target_h=1080,
-                               budget_credits=4000, sfx_specs=None) -> dict:
-    """Produce from ALREADY-sourced clips (skips re-sourcing/vision — the Stage-1 curated set): TTS the
-    spoken beats → design audio (cues+bed+sfx) → assemble with the full audio design → submit for
-    approval. `sourced`: {beat.index → SourcedAsset | [SourcedAsset]}. Channel-general."""
-    os.makedirs(workdir, exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-    vp = (channel.get("config") or {}).get("voice_profile") or {}
-    voice_id, model = vp.get("voice_id"), vp.get("model", "eleven_multilingual_v2")
-    pricing = await repo.ledger.get_llm_pricing(conn)
-    async with conn.transaction():
-        job = await repo.jobs.create(conn, channel_id=channel["id"], type="produce", status="assembling",
-                                     payload={"topic": topic, "format": target_fmt, "presourced": True})
-        await record_event(conn, "produce_started", message=f"produce '{topic}' (curated clips)",
-                           channel_id=channel["id"], job_id=job["id"])
-    jid = job["id"]
-    try:
-        narration = await _tts_all_beats(conn, script, tts=tts, voice_id=voice_id, model=model,
-                                         workdir=workdir, channel_id=channel["id"], job_id=jid)
-        design = await generate_audio(conn, music, script, channel=channel, job_id=jid,
-                                      workdir=os.path.join(workdir, "audio"),
-                                      budget_credits=budget_credits, sfx_specs=sfx_specs)
-        _persist_production(spec_slug(script.title), script, narration)
-        return await _assemble_and_submit(
-            conn, notifier, channel=channel, script=script, sourced=sourced, narration=narration,
-            llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
-            description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, dst=dst,
-            workdir=workdir, job_id=jid, topic=topic, target_fmt=target_fmt, target_w=target_w,
-            target_h=target_h, design=design)
-    except Exception as e:  # noqa: BLE001
-        async with conn.transaction():
-            await repo.jobs.set_status(conn, jid, "failed", error=str(e))
-            await record_event(conn, "produce_failed", message=str(e),
-                               channel_id=channel["id"], job_id=jid)
-        raise
-
-
-async def remake_from_narration(conn, notifier, *, channel, topic, script, narration_paths, providers,
-                                llm_provider, usage_sink, description_exemplar, publisher, chat_id, dst,
-                                workdir, cache_dir="assets/sourced", target_fmt="16:9",
-                                target_w=1920, target_h=1080, music=None, budget_credits=4000,
-                                sfx_specs=None) -> dict:
-    """Re-make a video from EXISTING narration mp3s (no TTS spend): re-source N distinct clips per beat
-    to the density standard, then bind → gate → assemble → submit. `narration_paths`: {beat.index → mp3}
-    (the treasured VO, already on disk); `script`: the reconstructed script (labels + shot-briefs steer
-    sourcing; the measured mp3 length drives each beat's duration)."""
-    os.makedirs(workdir, exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-    pricing = await repo.ledger.get_llm_pricing(conn)
-    # wordless beats (no narration path) use their declared approx_seconds, not a measured length
-    lengths = {b.index: (float(probe(narration_paths[b.index])["duration"])
-                         if narration_paths.get(b.index) else float(b.approx_seconds))
-               for b in script.beats}
-
-    async with conn.transaction():
-        job = await repo.jobs.create(conn, channel_id=channel["id"], type="remake",
-                                     status="assembling",
-                                     payload={"topic": topic, "format": target_fmt, "reuse_narration": True})
-        await record_event(conn, "produce_started", message=f"remake '{topic}' (narration reused)",
-                           channel_id=channel["id"], job_id=job["id"])
-    jid = job["id"]
-
-    try:
-        sourced = await _source_all_beats(
-            conn, providers, script, channel_id=channel["id"], job_id=jid, target_fmt=target_fmt,
-            target_w=target_w, target_h=target_h, cache_dir=cache_dir, llm=llm_provider,
-            length_of=lambda b: lengths[b.index], subject=topic)
-        design = await generate_audio(conn, music, script, channel=channel, job_id=jid,
-                                      workdir=os.path.join(workdir, "audio"),
-                                      budget_credits=budget_credits, sfx_specs=sfx_specs)
-        _persist_production(spec_slug(script.title), script, narration_paths)
-        return await _assemble_and_submit(
-            conn, notifier, channel=channel, script=script, sourced=sourced, narration=narration_paths,
-            llm_provider=llm_provider, usage_sink=usage_sink, pricing=pricing,
-            description_exemplar=description_exemplar, publisher=publisher, chat_id=chat_id, dst=dst,
-            workdir=workdir, job_id=jid, topic=topic, target_fmt=target_fmt, target_w=target_w,
-            target_h=target_h, design=design)
-    except Exception as e:  # noqa: BLE001
-        async with conn.transaction():
-            await repo.jobs.set_status(conn, jid, "failed", error=str(e))
-            await record_event(conn, "produce_failed", message=str(e),
-                               channel_id=channel["id"], job_id=jid)
-        raise
 
 
 def spec_slug(title: str) -> str:
