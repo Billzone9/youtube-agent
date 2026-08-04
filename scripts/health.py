@@ -53,6 +53,26 @@ def _pg_up(settings) -> bool:
         return False
 
 
+# The hermeticity backstop (verify-hermeticity-standard.md): a verify that leaves production rows is an
+# accidental-upload path. Snapshot the danger tables before the suite; assert zero net-new after.
+_DANGER = ("approvals", "videos", "jobs")
+
+
+def _danger_marks(settings) -> dict:
+    with psycopg.connect(settings.dsn(), connect_timeout=3) as c:
+        return {t: c.execute(f"SELECT COALESCE(MAX(id),0) FROM {t}").fetchone()[0] for t in _DANGER}
+
+
+def _leftover(settings, marks: dict) -> list[str]:
+    dirty = []
+    with psycopg.connect(settings.dsn(), connect_timeout=3) as c:
+        for t in _DANGER:
+            n = c.execute(f"SELECT count(*) FROM {t} WHERE id > %s", [marks[t]]).fetchone()[0]
+            if n:
+                dirty.append(f"{t}:+{n}")
+    return dirty
+
+
 def _run(mod: str) -> tuple[int, str, float]:
     t = time.monotonic()
     p = subprocess.run([sys.executable, "-m", f"scripts.{mod}"], capture_output=True, text=True)
@@ -68,6 +88,8 @@ def main() -> None:
     results: list[tuple[str, str, float, str]] = []      # (mod, PASS/FAIL, secs, tail)
     skipped: list[str] = []
 
+    marks = _danger_marks(settings) if pg else None      # hermeticity high-water before the suite
+
     for mod, needs_db in _OFFLINE:
         if needs_db and not pg:
             skipped.append(f"{mod} (Postgres down)")
@@ -81,6 +103,12 @@ def main() -> None:
             results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
         else:
             skipped.append(f"{mod} (no {keyenv} — optional live)")
+
+    # Hermeticity backstop: any production rows left by the suite are a defect (accidental-upload path).
+    leftover = _leftover(settings, marks) if marks is not None else []
+    if leftover:
+        results.append(("hermeticity", "FAIL", 0.0,
+                        f"verifies left production rows: {', '.join(leftover)} — non-hermetic verify"))
 
     fails = [r for r in results if r[1] == "FAIL"]
 

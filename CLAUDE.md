@@ -254,6 +254,12 @@ without approval.**
   (both gitignored).
 - **Two terminals, always tagged** `[ON THE SERVER]` / `[ON YOUR MAC]`; **no `#` comment lines in
   shell blocks**; **end command chains with** `&& echo "OK..." || echo "FAILED..."`.
+- **Hermetic verifies (binding — `verify-hermeticity-standard.md`).** Every DB-touching `verify_*.py`
+  MUST leave ZERO production-state rows — a leftover `pending` publish approval is a tap-to-upload card
+  once the token is armed (this is what put 32 armed cards in the queue on 2026-08-04). Wrap DB work in
+  `hermetic(conn)` (or `high_water`/`sweep`) from `scripts/_hermetic.py`; new verifies start from that
+  pattern. `make health` snapshots `approvals/videos/jobs` before the suite and FAILS on any net-new row,
+  so green health now also means "the tests left no production debris."
 - **Public-facing output** (full standard: `public-facing-output-standard.md`; spec §15 — read the
   doc in full before touching any metadata/description behaviour). Everything an audience sees —
   descriptions, titles, tags, chapter labels, community posts, social captions — is viewer-first,

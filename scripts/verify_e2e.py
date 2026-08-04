@@ -31,6 +31,8 @@ from ytagent.notifier import StubNotifier
 from ytagent.publish import DryRunPublisher
 from ytagent.sourcing.base import Candidate, GateResult, SourcedAsset
 
+from scripts._hermetic import high_water, sweep
+
 PASS, FAIL = "✅", "❌"
 _failures = 0
 _COLORS = ["teal", "maroon", "olive", "navy", "purple", "green", "gray", "orange"]
@@ -104,6 +106,7 @@ class _Sink:
 async def run():
     settings = load_settings()
     conn = await psycopg.AsyncConnection.connect(settings.dsn(), row_factory=dict_row, autocommit=True)
+    hw = await high_water(conn)   # hermetic (verify-hermeticity-standard.md): produce_video creates a job
     work = tempfile.mkdtemp(prefix="verify-e2e-")
     try:
         ch = await repo.channels.get_by_slug(conn, "wildlife")
@@ -230,6 +233,7 @@ async def run():
         check("no music provider → no cues, no breathers, manifest = narration+footage only",
               not dz.cues and not dz.breathers and "music" not in dz.manifest and bool(dz.manifest.get("narration")))
     finally:
+        await sweep(conn, hw)   # remove the produce job(s) produce_video created (incl. the NoMatch fail)
         await conn.close()
 
     print(f"\n{'ALL PASSED' if _failures == 0 else str(_failures) + ' CHECK(S) FAILED'}")

@@ -29,6 +29,8 @@ from ytagent.notifier import StubNotifier
 from ytagent.publish import DryRunPublisher
 from ytagent.tts.base import TTSResult
 
+from scripts._hermetic import high_water, sweep
+
 PASS, FAIL = "✅", "❌"
 _failures = 0
 
@@ -115,6 +117,7 @@ async def _seed_sourced(conn, ch, work):
 async def run():
     settings = load_settings()
     conn = await psycopg.AsyncConnection.connect(settings.dsn(), row_factory=dict_row, autocommit=True)
+    hw = await high_water(conn)   # hermetic-by-default (verify-hermeticity-standard.md): swept in finally
     ch = await repo.channels.get_by_slug(conn, "wildlife")
     work = tempfile.mkdtemp(prefix="resume-")
     tts, music = _FakeTTS(), _FakeMusic()
@@ -199,13 +202,9 @@ async def run():
             check("ceiling check ran", False, str(e)[:60])
 
     finally:
-        for jid in created_jobs:
-            await conn.execute("DELETE FROM events WHERE job_id=%s", [jid])
-            await conn.execute("DELETE FROM approvals WHERE job_id=%s", [jid])
-            await conn.execute("DELETE FROM videos WHERE job_id=%s", [jid])
-        await conn.execute("DELETE FROM sourced_assets WHERE source='pixabay' AND asset_id LIKE 'rt_%'")
-        # the submit created a publish job/video/approval — clean by the produced title
-        await conn.execute("DELETE FROM jobs WHERE id = ANY(%s)", [created_jobs])
+        # hermetic sweep: removes EVERYTHING created since high_water — including the publish
+        # job/video/approval the submit created internally, which the old per-job cleanup missed.
+        await sweep(conn, hw)
         await conn.close()
 
     print(f"\n{'ALL PASSED' if _failures == 0 else str(_failures) + ' CHECK(S) FAILED'}")
