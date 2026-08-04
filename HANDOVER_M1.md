@@ -1,58 +1,66 @@
 # Handover — M1 (credit-light Shorts, the A′ discovery engine)
 
-**As of 2026-08-04, `origin/main` = `7daa285`.** Pick up fresh from here. Full spec:
-`PLAN_M1_SHORTS.md`; arc context: `PLAN_MARKETING_ARC.md`. Run `make health` first (16→19 verifies).
+**As of 2026-08-04.** `origin/main` = `27dcd60`; **3 local commits ahead, UNPUSHED** (`63e5385` item 5+3,
+`768d629` item 1, `ae0a5c5` item 4 guards) — awaiting a ship-word. Run `make health` first. Full spec:
+`PLAN_M1_SHORTS.md`; arc context: `PLAN_MARKETING_ARC.md`.
 
 ## The decision that frames M1
-Cadence is **discovery-weighted**: fortnightly long-form (~13,700 cr/mo) + **~4 Shorts/wk** (~23,600/mo,
-~6,400 headroom), NOT weekly long-form (which alone is ~99% of the 30k recurring allowance). Shorts are
-the discovery lever at 0 subs; long-form scales back up once discovery is PROVEN (the 8-week cohort
-criterion in `PLAN_M1_SHORTS`). Sustainable cadence is ~1 long-form/wk max on the current £5 plan.
+Discovery-weighted cadence: fortnightly long-form (~13,700 cr/mo) + **~4 Shorts/wk** (~23,600/mo, ~6,400
+headroom), NOT weekly long-form (~99% of the 30k recurring). Shorts are the discovery lever at 0 subs;
+long-form scales up once discovery is PROVEN (8-week cohort criterion). ~1 long-form/wk max on the £5 plan.
 
-## Built + PROVEN this arc
-- **A real Short reached the Telegram card end-to-end** (`scripts/prove_short_live.py`, job 514):
-  source → bind → assemble → describe → submit. £0.0534 total, **ElevenLabs £0** (reused bed, no TTS) —
-  the cost IS the vision. Dry-run; the stale card (approval 184) was VOIDED (pre-#Shorts description).
-- `bind_short_spec` — 9:16 single-beat Short binder (footage + attested bed, explicit duration, no voice).
-- **Claim-safe bed library** — `assets/beds/` (media gitignored) + **`beds-manifest.json`** (committed
-  CONTROL): a bed is admissible only if attested `elevenlabs_generated` AND its bytes hash to the record.
-  `beds.py` default-denies; `pick_bed` rotates. Origin is ENFORCED, not asserted.
-- **Shorts density** — `assert_visual_density(short=True)`: floor relaxed to 1, `SHORTS_MAX_S=60`
-  enforced inside the flag (can't disable density on long-form), no-reuse kept.
-- **Silent+bed render is clean** — measured on real footage: hi16k −84.3 (under −47), 48 kHz (no 96k
-  trap), −12.3 LUFS. `bed_db` unified to −30 (measured equal to −24). **LUFS asserted** (−14±2; <15s
-  flagged untrustworthy).
-- **Cross-video no-reuse** — `repo.sourcing.used_asset_ids(channel)` seeds the exclude set in
-  `_source_all_beats`, so no clip repeats across videos (films + Shorts). Live: channel excludes 26 prior.
-- **Sourcing bounded** — Shorts use `source_clips_for_brief` (single-beat, `max_attempts=n_target*3+10`),
-  NOT `source_film`. Vision ~£0.05–0.10 typical, ≤£0.34 — a fraction of a film's ~£0.72.
-- **Publish gate** — `youtube.assert_short_conditions`: a 9:16 upload is REFUSED unless vertical + ≤60s +
-  #Shorts, on BOTH `publish()` and `update_public()` (the way channel_id is asserted). 16:9 = no-op. So
-  YouTube can't silently file a Short as an ordinary vertical video and void the cohort.
+## Built + PROVEN
+Earlier arc: `bind_short_spec`; enforced-origin claim-safe bed library (`beds-manifest.json` + `beds.py`
+default-deny + rotation); Shorts density (`short=True` floor 1, `SHORTS_MAX_S=60` enforced); silent+bed
+render clean on real footage (hi16k −84.3, 48 kHz, LUFS asserted −14±2); cross-video no-reuse
+(`used_asset_ids` seeds the exclude); bounded sourcing (`source_clips_for_brief`, ~£0.05–0.34); publish
+gate `assert_short_conditions` (9:16 → vertical+≤60s+#Shorts or refuse).
 
-## What REMAINS in M1 (the next session — touches scheduler + live publish; start fresh)
-1. **`videos.cohort` migration** + propagate `format="short"` (job payload → ledger metadata) so
-   `roi_report`/`estimate_vs_actual` SEPARATE Shorts from films (the cost ratio inverts).
-2. **Unlisted cohort playlist writes** — `playlists.insert` + `playlistItems.insert`, own-uploaded-ids
-   only (force-ssl review already recorded in BACKLOG). The YouTube-side cohort survival for Analytics.
-3. **Short cost-estimator variant** — vision-dominant, else a Short is under-counted ~4× (film estimator's
-   old error class).
-4. **Playbook format-mix** — schedule Shorts + long-form per channel (§14.4).
-5. **Fold `produce_short` into `produce.py`** — currently the runner `prove_short_live.py`; make it a real
-   conductor function (append #Shorts to the description there — the gate requires it).
-6. **Live PUBLISH of a Short** — needs the force-ssl re-auth + Banks's tap; deferred (nothing published yet).
+THIS session (the 3 unpushed commits):
+- **`produce.produce_short` is a REAL conductor** (item 5) — create job (payload.format=short) → Short
+  spend gate → attested rotated bed → bounded source → bind → assemble (density+noise) → assert LUFS →
+  describe (+#Shorts) → submit. Straight-through (cheap enough to re-run). `prove_short_live` is a thin
+  runner over it. LIVE: job 521 → **approval 188 on the card** (fresh, gate-valid; replaced the voided 184).
+- **`estimate_short_cost`** (item 3) — vision-DOMINANT (Anthropic), ElevenLabs ≈ 0; the ratio inverts vs a
+  film. Persisted at the gate. `estimate_vs_actual` separates Shorts (a `fmt` col) + footnotes the ~2×
+  padding as BY-DESIGN.
+- **`videos.cohort`** (item 1, migration 0018) — the two live long-forms BACKFILLED `m1-longform` (the
+  baseline the Shorts get compared against); `produce_short`→`m1-shorts`, `produce_video`→`m1-longform`
+  self-tag via `submit_video_for_approval(cohort=…)`.
+- **Item-4 GUARDS** (built; wiring pending) — failure taxonomy (`BedUnavailableError`/`ProductionError`/
+  `ShortQCError`, all distinct) + the RECURRING cadence gate (`credit_status(recurring_allowance=…)` →
+  `remaining_recurring`; live 15,684 of 30,000, independent of the 5,684 key remaining).
+
+## What REMAINS
+1. **Item 4 WIRING — the scheduler consuming the guards (touches the component that runs UNATTENDED).**
+   Playbook format-mix (Short vs long-form ticks) → call `produce_short` → route its exceptions per the
+   taxonomy → apply the recurring cadence gate at commission. **Two REQUIREMENTS before building (below).**
+2. **Item 2** — unlisted cohort playlist writes (`playlists.insert`+`playlistItems.insert`, own-ids only;
+   force-ssl review recorded). Coupled to the live-publish surface — do near item 6.
+3. **Item 6** — live PUBLISH of a Short (needs force-ssl re-auth + Banks's tap). Nothing published yet.
+
+## Cadence wiring — REQUIREMENTS (resolve in the wiring, not after)
+- **(note 1) The verify must assert the FAILING case, not the happy path.** Given a state where the KEY
+  remaining is large (rollover-inflated) but RECURRING is exhausted, commissioning must PAUSE. A happy-path
+  verify would pass even if the wiring read `remaining` instead of `remaining_recurring` — assert the pause.
+- **(note 2, DECIDED) The cadence gate FAILS CLOSED on `credit_status` == None.** An unattended scheduler
+  must NOT commission blind to the recurring budget → PAUSE cadence + alert. This is DELIBERATE and the
+  OPPOSITE of the per-job key gate (which degrades OPEN — a blip mustn't halt an operator-invoked run).
+  per-job = don't-block-on-a-blip; cadence = don't-over-commit-blind. Encode it, don't inherit degrade-open.
+- **Failure routing (from the guards):** `BedUnavailableError` → BLOCK playbook + alert (config; never
+  retry); `ProductionError` (NoMatch) → record + skip to next tick (ONE attempt, not the film 3×-subject
+  retry that re-pays vision); `ShortQCError` (LUFS) → fail ONCE; network/5xx → transient backoff.
 
 ## Open backlog (named)
-- **Vision cache mirror** — `source_clips_for_brief` lacks the `vision_cache` that `source_film` has, so a
-  re-seen clip re-PAYS vision (dominant Short cost). Mirror `vision_cache.get/put`. Also makes the
-  `used_asset_ids` "release failed-job clips" predicate cost-free. (BACKLOG, marketing-arc section.)
-- **Bed-manifest derivable origin** — the `beds-manifest.json` attestation is hand-written; when a bed is
-  machine-generated, bind its entry to the ElevenLabs `request_id` + `cost_ledger` row (traceable, not
-  claimed). Matters at channel #2 / automation. (BACKLOG.)
-- **`_SHORT_MAX_S` = 60 vs YouTube's 180** — the publish gate asserts ≤60s (reliable classification +
-  discovery sweet spot); YouTube allows Shorts to 180s. Bump the constant if longer Shorts are wanted.
+- **Vision cache mirror** — `source_clips_for_brief` lacks the `vision_cache` `source_film` has → re-pays
+  vision on re-seen clips (the dominant Short cost). Mirror `vision_cache.get/put`.
+- **Recalibrate the Short vision multiplier after ~5 real runs** — `estimate_short_cost` pads 2× n_target;
+  job 521 ran ~1.3×. Don't tune on one point; drop toward ~1.4× after ~5 runs.
+- **Bed-manifest derivable origin** — bind machine-generated beds to `request_id` + `cost_ledger`, not a
+  hand-written attestation.
+- **`_SHORT_MAX_S` = 60 vs YouTube's 180** — bump if longer Shorts are wanted.
 
 ## Boundary note
-Stopped deliberately at a clean edge: a real Short proved end to end, the publish gate closed behind it,
-the stale card voided. The remaining M1 work touches the scheduler and the live publish surface — the
-wrong things to begin on a long context. Nothing is half-applied; `make health` is green.
+Three increments this session; the next is the scheduler, which runs unattended — it wants a fresh read,
+not a rushed fourth. Nothing is half-applied; `make health` is green. The 3 commits are LOCAL — ship them
+(and this handover) on the word, or the fresh session picks up from `27dcd60` + these commits by hash.
