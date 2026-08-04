@@ -52,7 +52,12 @@ class AudioDesign:
     manifest: dict = field(default_factory=dict)    # contents → disclosure
     credits_spent: float = 0.0
     layers: list = field(default_factory=list)      # human-readable layer summary
-    notes: list = field(default_factory=list)       # graceful-degradation log
+    notes: list = field(default_factory=list)       # graceful-degradation log (human text)
+    # STRUCTURED declared-degradation record (D3): capability → reason, for degradations that are
+    # EXPECTED and INTENTIONAL (no provider / scope-blocked / dropped for the credit ceiling). The
+    # completeness guard trusts these; an element missing WITHOUT a declaration here is a defect. Never
+    # inferred from an empty result — a capability is "unavailable" only if it says so here.
+    declared: dict = field(default_factory=dict)
 
 
 def _tone(channel: dict) -> tuple[str, str]:
@@ -142,6 +147,7 @@ async def generate_audio(conn, music, script, *, channel: dict, job_id: int | No
     manifest = {"narration": "AI text-to-speech", "footage": "licensed / CC-0 stock"}
     if music is None:
         d.notes.append("no music provider configured — shipped narration only")
+        d.declared["music"] = "no music provider configured"   # DECLARED unavailable (not a defect)
         d.manifest = manifest
         return d
 
@@ -163,12 +169,14 @@ async def generate_audio(conn, music, script, *, channel: dict, job_id: int | No
         est = spec.seconds * _CREDITS_PER_SEC
         if spent + est > budget_credits:
             d.notes.append(f"credit ceiling {budget_credits:.0f} reached — skipped cue '{spec.key}'")
+            d.declared["music"] = f"credit ceiling {budget_credits:.0f} reached"   # DECLARED (budget)
             continue
         try:
             res, note = await _gen_gated(music, spec.prompt, seconds=spec.seconds,
                                          dst=os.path.join(workdir, f"cue_{spec.key}.mp3"), kind=f"cue:{spec.key}")
         except MusicScopeError as e:
             d.notes.append(f"music scope blocked — shipped narration only ({e})")
+            d.declared["music"] = f"scope blocked ({e})"   # DECLARED unavailable (not a defect)
             break
         if res is None:
             d.notes.append(note)
@@ -198,8 +206,10 @@ async def generate_audio(conn, music, script, *, channel: dict, job_id: int | No
                 d.notes.append(note)
         except MusicScopeError as e:
             d.notes.append(f"bed skipped (scope): {e}")
+            d.declared["bed"] = f"scope blocked ({e})"
     elif made_music:
         d.notes.append(f"credit ceiling — bed skipped")
+        d.declared["bed"] = "credit ceiling"
 
     # --- SFX (optional, pre-flighted, degrades gracefully) ---
     sfx_out = []
@@ -207,6 +217,7 @@ async def generate_audio(conn, music, script, *, channel: dict, job_id: int | No
         est = sspec.seconds * _CREDITS_PER_SEC
         if spent + est > budget_credits:
             d.notes.append(f"credit ceiling — SFX '{sspec.prompt[:24]}' skipped")
+            d.declared["sfx"] = "credit ceiling"
             continue
         try:
             res, note = await _gen_gated(music, sspec.prompt, seconds=sspec.seconds,
@@ -214,6 +225,7 @@ async def generate_audio(conn, music, script, *, channel: dict, job_id: int | No
                                          sound_effect=True)
         except MusicScopeError as e:
             d.notes.append(f"SFX scope blocked — shipped without SFX ({e})")
+            d.declared["sfx"] = f"scope blocked ({e})"
             break
         if res is None:
             d.notes.append(note)
@@ -232,5 +244,46 @@ async def generate_audio(conn, music, script, *, channel: dict, job_id: int | No
                        message=f"audio: {len(d.cues)} beats scored, bed={'yes' if d.bed else 'no'}, "
                                f"{len(d.sfx)} sfx, {spent:.0f} credits (ceiling {budget_credits:.0f})",
                        channel_id=ch_id, job_id=job_id,
-                       data={"layers": d.layers, "notes": d.notes, "credits": spent, "manifest": manifest})
+                       data={"layers": d.layers, "notes": d.notes, "declared": d.declared,
+                             "credits": spent, "manifest": manifest})
     return d
+
+
+class AudioDesignError(RuntimeError):
+    """The audio design is INCOMPLETE in a way that is a DEFECT — an element that was planned, whose
+    capability was available, and which was NOT declared-degraded, is missing at assembly time. Distinct
+    from a declared degradation (no provider / scope-blocked / credit-ceiling), which ships cleanly."""
+
+
+def assert_audio_complete(design, script, channel: dict) -> None:
+    """HARD gate before a render (D3). Fails ONLY on planned-then-missing — never on a declared
+    degradation. Two checks:
+      (1) Referential integrity: every file the design REFERENCES (cue / bed / sfx) must exist on disk.
+          A dangling reference is a planned element that vanished — a defect regardless of declarations.
+      (2) Music plan completeness: unless 'music' is in `design.declared` (an intentional degradation),
+          every cue beat the plan intends must be present. This catches the silent drop the resume path
+          (`_design_from_disk`) used to do — a planned cue whose file went missing, skipped without a word.
+    Bed and SFX are opt-in/conditional, so they get referential integrity only (a set-but-missing file
+    is a defect; their absence is not)."""
+    missing_files, missing_planned = [], []
+    for b, c in design.cues.items():
+        if not os.path.exists(c.file):
+            missing_files.append(f"cue@beat{b}")
+    if design.bed and not os.path.exists(design.bed):
+        missing_files.append("bed")
+    for s in design.sfx:
+        if not os.path.exists(s.file):
+            missing_files.append(f"sfx@{s.beat}")
+
+    if "music" not in (design.declared or {}):
+        cue_specs, _, _ = plan_cues(script, channel)
+        expected = {b for spec in cue_specs for b in spec.beats}
+        missing_planned = sorted(expected - set(design.cues.keys()))
+
+    if missing_files or missing_planned:
+        raise AudioDesignError(
+            "audio design INCOMPLETE (planned-then-missing, not a declared degradation) — "
+            + (f"referenced files absent: {missing_files}; " if missing_files else "")
+            + (f"planned cue beats missing while music is NOT declared-degraded: {missing_planned}; "
+               if missing_planned else "")
+            + f"declared={dict(design.declared) or 'none'}")

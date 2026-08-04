@@ -19,7 +19,7 @@ import shutil
 from dataclasses import asdict, replace as dc_replace
 
 from . import repo
-from .audio_design import generate_audio, plan_cues
+from .audio_design import assert_audio_complete, generate_audio, plan_cues
 from .assembly import assemble_spec, bind_edit_spec
 from .assembly import qc as aqc
 from .assembly.beds import pick_bed
@@ -259,6 +259,9 @@ async def _assemble(conn, *, channel, script, sourced, narration, design, dst, w
     All the render gates (density, input+output noise, 48k) apply — a bad cut fails HERE, before submit."""
     tgt = Target(fmt=target_fmt, w=target_w, h=target_h, fps=24)
     dz = design
+    if dz is not None:                                      # D3: planned-then-missing audio fails HERE,
+        assert_audio_complete(dz, script, channel)         # loud, before the render — a declared
+                                                           # degradation (no provider/scope/ceiling) passes
     spec = bind_edit_spec(script, sourced, narration, target=tgt,
                           cues=(dz.cues if dz else None), breathers=(dz.breathers if dz else None),
                           bed=(dz.bed if dz else None), sfx=(dz.sfx if dz else ()))
@@ -382,7 +385,8 @@ def _serialize_design(dz) -> dict:
                               "fade_out": c.fade_out} for b, c in dz.cues.items()},
             "breathers": {str(b): s for b, s in dz.breathers.items()}, "bed": dz.bed,
             "sfx": [{"file": s.file, "beat": s.beat, "at_s": s.at_s, "level_db": s.level_db} for s in dz.sfx],
-            "manifest": dz.manifest, "credits_spent": dz.credits_spent, "layers": dz.layers}
+            "manifest": dz.manifest, "credits_spent": dz.credits_spent, "layers": dz.layers,
+            "declared": dz.declared, "notes": dz.notes}   # D3: declared degradations survive resume
 
 
 def _deserialize_design(d: dict):
@@ -395,6 +399,8 @@ def _deserialize_design(d: dict):
     dz.manifest = d.get("manifest") or {}
     dz.credits_spent = d.get("credits_spent", 0)
     dz.layers = d.get("layers", [])
+    dz.declared = d.get("declared") or {}          # D3: restore declared degradations on resume
+    dz.notes = d.get("notes", [])
     return dz
 
 
