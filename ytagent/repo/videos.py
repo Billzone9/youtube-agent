@@ -39,6 +39,14 @@ async def set_published(
     return await cur.fetchone()
 
 
+async def set_cohort_playlist(conn, video_id: int, playlist_id: str) -> dict:
+    """Mark this video as placed in its cohort playlist (idempotency for a second live publish)."""
+    cur = await conn.execute(
+        "UPDATE videos SET cohort_playlist_id = %s WHERE id = %s RETURNING *",
+        [playlist_id, video_id])
+    return await cur.fetchone()
+
+
 async def get(conn, video_id: int) -> dict | None:
     cur = await conn.execute("SELECT * FROM videos WHERE id = %s", [video_id])
     return await cur.fetchone()

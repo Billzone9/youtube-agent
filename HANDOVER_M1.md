@@ -44,10 +44,23 @@ weigh, not code to write** — and it's the point at which the recurring gate + 
 in production. Don't flip it as a build step.
 
 ## What REMAINS in M1
-1. **Item 2 — unlisted cohort playlist writes** (`playlists.insert`+`playlistItems.insert` on
-   `youtube.py`, own-uploaded-ids only; the force-ssl review is recorded in BACKLOG). The YouTube-side
-   cohort survival for the Analytics pull. **Touches `youtube.py` (the narrow write surface) — start fresh.**
-2. **Item 6 — live PUBLISH of a Short** (needs force-ssl re-auth + Banks's tap). Nothing published yet.
+1. **Item 6 — live PUBLISH of a Short** (needs force-ssl re-auth + Banks's tap). Nothing published yet.
+   This is the FIRST live exercise of the cohort playlist write below (dry-run is a no-op).
+
+## Item 2 — DONE (unlisted cohort playlist writes)
+`youtube.py` gained `add_to_cohort_playlist` / `_add_to_cohort_playlist` (the ONLY `playlists.insert` +
+`playlistItems.insert` call site) — confined exactly like `update_public`: inserts ONLY our own uploaded
+`youtube_video_id` into ONLY our cohort playlist, creating ONE unlisted playlist if none exists; no
+delete/list-others/branding. Storage: `cohort_playlists(channel_id, cohort, youtube_playlist_id)` +
+`videos.cohort_playlist_id` marker (migration 0020); `repo/playlists.py` (`get`/`save`). Wiring:
+`orchestrator._place_in_cohort_playlist` runs after the Phase-3 persist txn (network → OUTSIDE any held
+txn), on a LIVE publish where the video has a `cohort` and isn't already placed; **best-effort — a dry
+run is a no-op, and any failure is logged (`cohort_playlist_failed`), never fails the irreversible
+publish.** Idempotent across the upload-private→make-public sequence (the marker). `DryRunPublisher`
+returns None (touches nothing on YouTube). Verify `scripts/verify_cohort_playlist.py` (in `make health`):
+Part A the confined write vs a fake google client (create-once/reuse/own-id-refusal/unlisted); Part B the
+DB wiring (place-once, same-cohort reuse, idempotent skip, dry-run no-op, no-cohort skip, failure-logged).
+The BACKLOG force-ssl review is marked implemented. NOT yet exercised live — item 6 is the first real run.
 
 ## Open backlog (named)
 - **Vision cache mirror** — `source_clips_for_brief` lacks the `vision_cache` `source_film` has → re-pays

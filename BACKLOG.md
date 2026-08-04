@@ -285,7 +285,11 @@ the pool most-likely-first, never a gate) was BUILT — see `scripts/vet_pool.py
   private-locked) + `update_public` (own-DB-ids only, channel-asserted). Do not add delete/list/playlist/
   comment/branding calls without an explicit, gated, reviewed reason. Consider (later) a periodic audit
   that lists what the token *could* do vs what our code *does*, so drift is visible.
-  - **REVIEW (2026-08-04) — the cohort playlist grows the surface; approved with confinement.** M1's
+  - **REVIEW (2026-08-04) — the cohort playlist grows the surface; approved with confinement. [IMPLEMENTED
+    2026-08-04 — `youtube.py:add_to_cohort_playlist` (the only playlists/playlistItems.insert site),
+    migration 0020, `repo/playlists.py`, wired in `orchestrator._place_in_cohort_playlist`, verify
+    `scripts/verify_cohort_playlist.py`. Confinement honored exactly; best-effort (dry-run no-op, failure
+    logged not raised). NOT yet exercised live — item 6 is the first real run.]** M1's
     Shorts success-measurement needs a YouTube-side cohort marker (an UNLISTED cohort playlist,
     reconstructable via `playlistItems.list`) so cohorts survive without the DB (PLAN_M1_SHORTS note 2).
     That means `youtube.py` gains `playlists.insert` (create the ONE cohort playlist once) +

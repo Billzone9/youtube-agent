@@ -399,6 +399,13 @@ async def handle_decision(
             approval_id=approval["id"], data=result.to_dict(),
         )
 
+    # --- Phase 3.5: the cohort playlist (network; OUTSIDE any held txn; NEVER fails the publish) ---
+    # The publish above is already irreversible and recorded. Placing the video in its unlisted cohort
+    # playlist is a best-effort marker for the Analytics pull — a failure here is logged, not raised.
+    await _place_in_cohort_playlist(
+        conn, publisher, channel=channel, video=video, result=result,
+        job=job, approval=approval)
+
     if msg_id:
         await notifier.update_resolved(
             chat_id=chat_id, message_id=msg_id,
@@ -407,6 +414,40 @@ async def handle_decision(
         "handled": True, "decision": "approve", "job_id": job["id"],
         "video_id": video["id"], "result": result.to_dict(),
     }
+
+
+async def _place_in_cohort_playlist(conn, publisher, *, channel, video, result, job, approval) -> None:
+    """After a LIVE publish, add the video to its cohort's unlisted playlist ONCE (BACKLOG review
+    2026-08-04). Confined to our own uploaded id + our own playlist by youtube.py. Best-effort: a dry
+    run is a no-op, and any failure is recorded, never raised — the publish already succeeded."""
+    cohort = video.get("cohort")
+    if not (result.mode == "live" and result.youtube_video_id and cohort):
+        return
+    if video.get("cohort_playlist_id"):   # already placed on an earlier live publish of this video
+        return
+    try:
+        existing = await repo.playlists.get(conn, channel["id"], cohort)
+        playlist_id = await publisher.add_to_cohort_playlist(
+            channel=channel, youtube_video_id=result.youtube_video_id,
+            cohort=cohort, existing_playlist_id=existing)
+        if not playlist_id:   # dry-run (or a publisher that does not support cohorts) — nothing recorded
+            return
+        async with conn.transaction():
+            if existing is None:
+                await repo.playlists.save(conn, channel["id"], cohort, playlist_id)
+            await repo.videos.set_cohort_playlist(conn, video["id"], playlist_id)
+            await record_event(
+                conn, "cohort_playlist_added",
+                message=f"added {result.youtube_video_id} to cohort {cohort!r} playlist {playlist_id}",
+                channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+                data={"cohort": cohort, "youtube_playlist_id": playlist_id,
+                      "youtube_video_id": result.youtube_video_id})
+    except Exception as e:  # noqa: BLE001 — the publish is done; never let the marker fail it
+        async with conn.transaction():
+            await record_event(
+                conn, "cohort_playlist_failed", message=str(e),
+                channel_id=channel["id"], job_id=job["id"], approval_id=approval["id"],
+                data={"cohort": cohort, "youtube_video_id": result.youtube_video_id})
 
 
 async def _record_misplaced(conn, notifier, *, channel, job, video, approval, chat_id, msg_id,

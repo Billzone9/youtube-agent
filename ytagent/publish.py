@@ -178,3 +178,11 @@ class DryRunPublisher:
             published_at=None, body=body, validation={},
             raw={"dry_run": True, "would_call": "youtube.videos.update",
                  "part": ["snippet", "status"], "video_id": video.get("youtube_video_id")})
+
+    async def add_to_cohort_playlist(
+        self, *, channel: dict, youtube_video_id: str, cohort: str,
+        existing_playlist_id: str | None,
+    ) -> str | None:
+        """A dry run changes NOTHING on YouTube — no playlist is created or touched. Returns None so the
+        caller records no cohort-playlist id (there is none)."""
+        return None

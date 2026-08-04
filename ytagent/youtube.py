@@ -212,6 +212,58 @@ class YouTubePublisher:
             published_at=datetime.now(timezone.utc), body=body, validation={},
             raw={"youtube_resource": resource})
 
+    async def add_to_cohort_playlist(
+        self, *, channel: dict, youtube_video_id: str, cohort: str,
+        existing_playlist_id: str | None,
+    ) -> str:
+        """Place ONE of our own uploaded videos into its cohort's UNLISTED playlist (BACKLOG review
+        2026-08-04). Confined exactly like update_public: this call inserts ONLY the given
+        youtube_video_id into ONLY our cohort playlist — creating that one playlist if it does not
+        exist yet. No delete, no listing/adding to others' playlists, no comment/branding.
+
+        Returns the cohort playlist id (the existing one, or the newly created one)."""
+        if not youtube_video_id:
+            raise RuntimeError("add_to_cohort_playlist called with no youtube_video_id (not ours/uploaded)")
+        creds = get_credentials(channel, self.settings)
+        if creds is None:
+            raise RuntimeError("no YouTube credentials (run `python -m ytagent.youtube_auth`)")
+        return await asyncio.to_thread(
+            self._add_to_cohort_playlist, creds, youtube_video_id, cohort, existing_playlist_id,
+            {youtube_video_id})   # own-id set = this video only
+
+    def _add_to_cohort_playlist(
+        self, creds: Credentials, yt_id: str, cohort: str,
+        existing_playlist_id: str | None, our_ids: set,
+    ) -> str:
+        """The ONLY playlists.insert / playlistItems.insert call site. Refuses any id we did not upload."""
+        if yt_id not in our_ids:
+            raise RuntimeError(f"refusing to add {yt_id} to a playlist: not in our own-upload set {our_ids}")
+        youtube = _client(creds)
+        playlist_id = existing_playlist_id
+        if not playlist_id:
+            try:
+                created = youtube.playlists().insert(
+                    part="snippet,status",
+                    body={"snippet": {"title": f"[internal] cohort — {cohort}",
+                                      "description": "Internal cohort marker (unlisted) for performance "
+                                                     "measurement. Not for public viewing."},
+                          "status": {"privacyStatus": "unlisted"}},
+                ).execute()
+            except HttpError as e:
+                raise _http_error("playlists.insert", e) from e
+            playlist_id = created["id"]
+            print(f"[youtube] created unlisted cohort playlist {playlist_id} for cohort={cohort!r}")
+        try:
+            youtube.playlistItems().insert(
+                part="snippet",
+                body={"snippet": {"playlistId": playlist_id,
+                                  "resourceId": {"kind": "youtube#video", "videoId": yt_id}}},
+            ).execute()
+        except HttpError as e:
+            raise _http_error("playlistItems.insert", e) from e
+        print(f"[youtube] added id={yt_id} to cohort playlist {playlist_id} (cohort={cohort!r})")
+        return playlist_id
+
     def _update(self, creds: Credentials, yt_id: str, body: dict, expected: str, our_ids: set) -> dict:
         """The ONLY videos.update call site. Refuses any id we did not upload; verifies the channel both
         before (pre-flight) and after (backstop) the write."""
