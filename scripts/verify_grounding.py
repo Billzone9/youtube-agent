@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import sys
 
-from ytagent.authoring.grounding import (ResearchFacts, SearchOutcome, gather_grounded_facts,
+from ytagent.authoring.grounding import (ResearchFacts, ResearchUnderReport, SearchOutcome,
+                                         gather_grounded_facts, reconcile_research_usage,
                                          research_directive)
 from ytagent.authoring.script import Fact
 from ytagent.scheduler import cost
@@ -81,6 +82,30 @@ def main():
     check("under DEFAULT caps a runaway is bounded to ≤ max_searches AND ≤ max_iterations",
           rf4.searches_used <= cost._RESEARCH_MAX_SEARCHES
           and rf4.searches_used <= cost._RESEARCH_MAX_ITERATIONS, f"searches={rf4.searches_used}")
+
+    print("[1b] NOTE 1 (live) — the bound is reconciled against ACTUAL API usage, not self-report")
+    # a run that reported 4 searches / 12k tokens...
+    rf_rep = ResearchFacts(searches_used=4, input_tokens=12_000)
+    # ...matches the billed truth → OK
+    try:
+        reconcile_research_usage(rf_rep, actual_input_tokens=12_000, actual_searches=4)
+        check("honest report (actual == reported) reconciles cleanly", True)
+    except ResearchUnderReport:
+        check("honest report (actual == reported) reconciles cleanly", False)
+    # ...but the API actually ran 12 server-side searches → CAUGHT (the exact "reported 1, ran several" case)
+    caught = False
+    try:
+        reconcile_research_usage(rf_rep, actual_input_tokens=12_000, actual_searches=12)
+    except ResearchUnderReport:
+        caught = True
+    check("a provider that ran MORE searches than it reported is caught", caught)
+    # under-reported tokens beyond tolerance → CAUGHT
+    caught_tok = False
+    try:
+        reconcile_research_usage(rf_rep, actual_input_tokens=40_000, actual_searches=4)
+    except ResearchUnderReport:
+        caught_tok = True
+    check("a provider that billed MORE tokens than it reported is caught", caught_tok)
 
     print("[2] NOTE 1 — a natural finish is COMPLETE, no degradation declared")
     rf_ok = gather_grounded_facts("lion", _DoneAfter(2), max_searches=8, max_iterations=4)

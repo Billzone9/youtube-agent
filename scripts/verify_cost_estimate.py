@@ -81,6 +81,15 @@ def main():
 
     print("[5] LLM (description) is in the estimate + per-provider breakdown present")
     check("llm_gbp > 0 (was omitted before)", est.llm_gbp > 0, f"£{est.llm_gbp}")
+    # NOTE 2: the gate must QUOTE grounded research before it spends → the estimate INCLUDES the ceiling
+    no_research = estimate_production_cost(script, _CH, include_research=False)
+    check("estimate INCLUDES the research ceiling by default (quoted before research spends)",
+          est.llm_gbp > no_research.llm_gbp
+          and round(est.llm_gbp - no_research.llm_gbp, 4) == cost.estimate_research_cost(),
+          f"Δ£{round(est.llm_gbp - no_research.llm_gbp, 4)} == £{cost.estimate_research_cost()}")
+    check("research is in the anthropic provider line, not hidden",
+          next(p.gbp for p in est.by_provider if p.provider == "anthropic")
+          > next(p.gbp for p in no_research.by_provider if p.provider == "anthropic"))
     provs = {p.provider for p in est.by_provider}
     check("breakdown covers all three providers",
           provs == {"elevenlabs_tts", "elevenlabs_music", "anthropic"}, str(sorted(provs)))

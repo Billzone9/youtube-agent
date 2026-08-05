@@ -498,7 +498,12 @@ async def _st_source(conn, state, *, providers, llm, channel, script):
 
 async def _spend_gate(conn, state, script, *, tts=None, per_job_threshold_gbp, enforce_ceiling, channel,
                       key_credit_cap=None):
-    est = estimate_production_cost(script, channel, sfx_specs=(state.get("cfg") or {}).get("sfx_specs"))
+    # include_research reflects REALITY: only quote the research ceiling when the conductor actually runs
+    # grounded research (state['research'] set once a research provider is wired). Until then, quoting it
+    # would over-estimate a stage that doesn't run — the vision problem in reverse. Flip on WITH the
+    # research call, so the estimate always matches what spends (PLAN_PHASE1_COSTS.md).
+    est = estimate_production_cost(script, channel, sfx_specs=(state.get("cfg") or {}).get("sfx_specs"),
+                                   include_research=bool(state.get("research")))
     state["estimate_gbp"] = est.total_gbp
     state["estimate"] = asdict(est)                       # persist full breakdown for estimate-vs-actual audit
     await record_event(conn, "spend_estimate",

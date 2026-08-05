@@ -26,10 +26,13 @@ from .script import Fact
 
 @dataclass(frozen=True)
 class SearchOutcome:
-    """One provider step: the facts it found + what it cost + whether the subject is now covered."""
+    """One provider step. `input_tokens` and `searches` MUST come from the API response's own usage
+    (`usage.input_tokens`, `server_tool_use.web_search_requests`) — NOT a guess — because the loop
+    enforces the caps against them. A provider that under-reports here is caught by
+    `reconcile_research_usage` against the cost ledger (the billed truth)."""
     facts: tuple[Fact, ...] = ()
-    input_tokens: int = 0
-    searches: int = 1            # searches this step consumed
+    input_tokens: int = 0        # from usage.input_tokens (API), not estimated
+    searches: int = 1            # from server_tool_use.web_search_requests (API), not assumed
     done: bool = False           # the provider judges the subject sufficiently researched
 
 
@@ -49,6 +52,29 @@ class ResearchFacts:
     @property
     def partial(self) -> bool:
         return not self.complete
+
+
+class ResearchUnderReport(RuntimeError):
+    """A provider spent MORE than it reported — the cap the loop enforced was against self-reported
+    figures, so the ceiling was a hope. Caught by reconciling the loop's counted usage against the API's
+    ACTUAL usage (billed tokens + server_tool_use.web_search_requests). A defect, not a soft warning."""
+
+
+def reconcile_research_usage(rf: ResearchFacts, *, actual_input_tokens: int, actual_searches: int,
+                            token_tolerance: int = 1_000) -> None:
+    """Cross-check the bound. The loop counted what the provider REPORTED; `actual_*` come from the API
+    response / cost ledger (the source of truth). If actual meaningfully EXCEEDS reported, the provider
+    under-reported and the cap did not really bound the spend → raise. (Actual ≤ reported is fine — the
+    estimate is a ceiling.) A small token tolerance absorbs rounding; searches must match exactly (a
+    server-side search that reported as 0/1 is exactly the failure this catches)."""
+    if actual_searches > rf.searches_used:
+        raise ResearchUnderReport(
+            f"provider ran {actual_searches} web searches but reported {rf.searches_used} — the search "
+            f"cap was against self-reported figures; bound not honoured")
+    if actual_input_tokens > rf.input_tokens + token_tolerance:
+        raise ResearchUnderReport(
+            f"provider billed {actual_input_tokens} input tokens but reported {rf.input_tokens} "
+            f"(> {token_tolerance} tolerance) — token bound not honoured")
 
 
 def gather_grounded_facts(

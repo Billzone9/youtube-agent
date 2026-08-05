@@ -68,10 +68,15 @@ class CostEstimate:
         return self.elevenlabs_credits
 
 
-def estimate_production_cost(script, channel: dict, *, sfx_specs=None) -> CostEstimate:
+def estimate_production_cost(script, channel: dict, *, sfx_specs=None,
+                             include_research: bool = True) -> CostEstimate:
     """Estimate one production's FORWARD spend at the 4→5 gate: TTS of the spoken beats + planned music
-    cues + bed + SFX (× retake headroom) + the description LLM. Uses the SAME cue plan the design stage
-    generates, so the estimate tracks what actually gets spent."""
+    cues + bed + SFX (× retake headroom) + the description LLM + grounded research (its CEILING). Uses
+    the SAME cue plan the design stage generates, so the estimate tracks what actually gets spent.
+
+    `include_research=True` (default) adds the research ceiling so the gate QUOTES research before it
+    spends — research runs after the gate fires (PLAN_PHASE1_COSTS.md; the sequencing the estimate named).
+    Pass False only for a production with no research stage."""
     # TTS — exact (1 credit/char)
     spoken = sum(len(t) for t in script.to_narration().values() if t.strip())
     tts_gbp = spoken * _CREDITS_PER_CHAR * _GBP_PER_CREDIT
@@ -88,14 +93,15 @@ def estimate_production_cost(script, channel: dict, *, sfx_specs=None) -> CostEs
     sfx_credits = sfx_seconds * _CREDITS_PER_SEC * _RETAKE_FACTOR
     sfx_gbp = sfx_credits * _GBP_PER_CREDIT
 
-    llm_gbp = _DESC_LLM_GBP
+    research_gbp = estimate_research_cost() if include_research else 0.0   # CEILING — quoted before it spends
+    llm_gbp = _DESC_LLM_GBP + research_gbp
     total_gbp = tts_gbp + music_gbp + sfx_gbp + llm_gbp
 
     by_provider = (
         ProviderCost("elevenlabs_tts", round(spoken * _CREDITS_PER_CHAR), round(tts_gbp, 4)),
         ProviderCost("elevenlabs_music", round(music_credits + sfx_credits),
                      round(music_gbp + sfx_gbp, 4)),
-        ProviderCost("anthropic", 0.0, round(llm_gbp, 4)),
+        ProviderCost("anthropic", 0.0, round(llm_gbp, 4)),   # description + grounded-research ceiling
     )
     return CostEstimate(
         tts_chars=spoken, tts_gbp=round(tts_gbp, 4),
