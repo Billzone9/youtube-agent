@@ -4,10 +4,13 @@ PY ?= ./.venv/bin/python
 export POSTGRES_HOST ?= localhost
 export POSTGRES_PORT ?= 5433
 
-.PHONY: health migrate pg seed ci
+.PHONY: health health-live migrate pg seed ci
 
-health:   ## Run the verify suite — "do the codes work" (exit 0 pass, 1 fail, 3 env)
+health:   ## Run the verify suite — "do the codes work" (exit 0 pass, 1 fail, 3 env). NO spend.
 	$(PY) -m scripts.health
+
+health-live: ## health + the live vision CALIBRATION (spends ~£0.05 of Anthropic). Deliberate, opt-in.
+	HEALTH_LIVE=1 $(PY) -m scripts.health
 
 pg:       ## Start the Postgres service the DB verifies need
 	docker compose up -d postgres

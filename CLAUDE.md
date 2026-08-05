@@ -175,6 +175,18 @@ terms (pennies of Haiku) but the footnote keeps early data honest rather than pr
   (what the key CAN'T do), not rules it is told to follow. The ElevenLabs key is scoped to Music with
   a per-key cap; future keys (footage, LLM, YouTube, social) follow the same least-privilege + cap
   pattern. Adding payment methods or upgrading plans stays a **manual, human-only** action.
+- **Anthropic API is billed per token, and a Claude subscription does NOT cover it (settled — do not
+  re-litigate).** The agent's programmatic LLM calls — vision (Haiku), scripting (Sonnet), descriptions
+  — go through the Anthropic **API** (`anthropic` SDK / `messages.create`) and are billed **per token
+  against the API credit balance**, regardless of any Claude **Pro/Max** subscription. A Max plan funds
+  the interactive Claude Code assistant (the reviewer/engineer), NOT the agent's API usage; it provides
+  no API credits and cannot serve API calls. So the agent's LLM spend requires **funding the Anthropic
+  API account** (credits/billing) — a manual, human-only action, separate from any subscription. (This
+  is why an out-of-credits balance blocks live vision/research even with Max active.)
+- **Live verifies that SPEND are opt-in, never a default.** `verify_vision_fixtures` is calibration
+  (~£0.05/run), so `make health` does NOT run it — only `make health-live` / `HEALTH_LIVE=1` (or a
+  scheduled CI job) does. Gating a spending test on mere key-presence is the trap that drained the
+  balance; opt-in behind an explicit flag is the rule for any spending check.
 - Anything that **actually spends money or publishes** stays a **HARD HUMAN GATE** (Telegram). This
   includes posting/replying as a channel and any social cross-post or paid promotion. Autonomous
   without a gate: research, scripting, asset generation within budget, queue management, analytics,

@@ -74,14 +74,14 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done (move done items to
 
 ---
 
-## Anthropic cost — Claude Max for scripts (log only, NOT a cost measure — 2026-08-04)
-- `[ ]` **Move script/description LLM to a Claude Max subscription instead of API — tidiness, not savings.**
-  Be honest about the size: the TEXT LLM is not the cost centre. Scripts+description are ~£0.008/film
-  (job 155), and the whole per-film LLM saving from Max is roughly **3p/film**. The real Anthropic driver
-  is VISION (~£0.72/film, the sourcing gate — see next item), and **a Max subscription CANNOT serve API
-  vision calls** (it's for interactive/subscription use, not programmatic image analysis). So Max saves
-  the pennies and leaves the pounds untouched. Worth doing later for account tidiness; do NOT log it as a
-  cost measure or expect it to move the ROI.
+## Anthropic cost — Claude Max for scripts (CLOSED — settled 2026-08-05, ruling in CLAUDE.md)
+- `[x]` **RESOLVED — NOT POSSIBLE, do not re-litigate.** A Claude Pro/Max subscription **cannot serve
+  the agent's programmatic API calls at all** — vision, scripting, and descriptions all go through the
+  Anthropic **API** (`messages.create`), billed per token against the API credit balance regardless of
+  any subscription. Max funds the interactive assistant, not the agent's API usage; it provides no API
+  credits and cannot serve API calls. So there was never a "move text LLM to Max" option — the agent's
+  LLM spend requires funding the Anthropic API account (human-only billing). Stated once, permanently, in
+  `CLAUDE.md` (Spending & safety). The real driver remains VISION spend (next item).
 
 ## Vision spend is the real Anthropic driver — reduce it (log options + est savings, DECIDE later)
 - `[ ]` **The sourcing vision gate (~£0.72/film) dwarfs all other Anthropic spend; early-stop + verdict

@@ -1,13 +1,15 @@
 """Health command — one runnable answer to "do the codes work" (B-completion NOW bundle).
 
-Runs the no-live-key verify suite as isolated subprocesses and aggregates pass/fail. The 13 existing
-offline verifies need no API keys (pure logic or Postgres + monkeypatched providers); the two new ones
-(allowance, subject_terms) are pure. `verify_vision_fixtures` is the ONLY live-key verify (Anthropic,
-pennies) and runs only when ANTHROPIC_API_KEY is set. A Postgres-down environment is reported as exit 3
-(environment incomplete) — DISTINCT from a verify FAILING (exit 1, a real defect). Failures are listed
-FIRST because that list takes priority.
+Runs the no-live-key verify suite as isolated subprocesses and aggregates pass/fail. The offline verifies
+need no API keys (pure logic or Postgres + monkeypatched providers). `verify_vision_fixtures` is the ONLY
+verify that SPENDS (live Anthropic, ~£0.05) — it is CALIBRATION, not a per-run regression, so it is
+OPT-IN: it runs only when `HEALTH_LIVE=1` is set (e.g. `make health-live`, or a scheduled CI job), NOT on
+every `make health`. Gating it on ANTHROPIC_API_KEY presence was the bug that drained the balance — the
+key is always set for the other verifies, so "optional" became "every run". A Postgres-down environment
+is exit 3 (incomplete) — DISTINCT from a verify FAILING (exit 1, a real defect). Failures list FIRST.
 
-Run: POSTGRES_HOST=localhost POSTGRES_PORT=5433 ./.venv/bin/python -m scripts.health
+Run: POSTGRES_HOST=localhost POSTGRES_PORT=5433 ./.venv/bin/python -m scripts.health   (no spend)
+Live calibration (spends ~£0.05): HEALTH_LIVE=1 ... ./.venv/bin/python -m scripts.health
 """
 from __future__ import annotations
 
@@ -122,17 +124,22 @@ def main() -> None:
         results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
         check_skips += sk
 
+    # Live (SPENDING) verifies are OPT-IN — calibration, not a per-run check. Default: skipped, no spend.
+    live_opt_in = os.environ.get("HEALTH_LIVE", "").strip().lower() in ("1", "true", "yes", "on")
     for mod, keyenv in _OPTIONAL_LIVE:
-        if os.environ.get(keyenv):
-            rc, tail, dur, sk = _run(mod)
-            reason = _api_down_reason(getattr(_run, "last_output", "")) if rc != 0 else None
-            if reason:                                   # provider API unreachable/unfunded → ENVIRONMENT
-                skipped.append(f"{mod} (live API unavailable: {reason} — not a code defect)")
-            else:
-                results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
-                check_skips += sk
+        if not live_opt_in:
+            skipped.append(f"{mod} (live calibration — opt-in: set HEALTH_LIVE=1; spends ~£0.05)")
+            continue
+        if not os.environ.get(keyenv):
+            skipped.append(f"{mod} (no {keyenv})")
+            continue
+        rc, tail, dur, sk = _run(mod)
+        reason = _api_down_reason(getattr(_run, "last_output", "")) if rc != 0 else None
+        if reason:                                       # provider API unreachable/unfunded → ENVIRONMENT
+            skipped.append(f"{mod} (live API unavailable: {reason} — not a code defect)")
         else:
-            skipped.append(f"{mod} (no {keyenv} — optional live)")
+            results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
+            check_skips += sk
 
     # Hermeticity backstop: any production rows left by the suite are a defect (accidental-upload path).
     leftover = _leftover(settings, marks) if marks is not None else []
