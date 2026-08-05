@@ -236,7 +236,7 @@ class ScriptWriter:
         self._exemplar = exemplar_text
 
     def write(self, *, topic: str, channel: dict, research, footage_distribution: dict,
-              runtime_target_s: int = 150, n_beats: int = 4, footage=None) -> Script:
+              runtime_target_s: int = 150, n_beats: int = 4, footage=None, facts=None) -> Script:
         if footage is not None:
             raise NotImplementedError("footage-bound scripting arrives with Slice 4; use footage=None")
         # STRUCTURAL footage-led enforcement (6b-bis): a script CANNOT be written for a subject without
@@ -264,6 +264,9 @@ class ScriptWriter:
             if not available else f"Research signals (web/trend): {getattr(research, 'notes', '')}"
         )
         user = f"VIDEO SUBJECT: {topic}\n{research_line}"
+        if facts is not None:                          # A1 grounded facts + partiality constraint reach
+            from .grounding import research_directive   # the writer here (lazy: grounding imports script)
+            user += "\n\n" + research_directive(facts)
         distribution = _distribution_brief(footage_distribution)
 
         # Regenerate on an AI-tell flag, a pacing overrun, a runtime overrun, OR an UNSOURCEABLE brief

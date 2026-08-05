@@ -30,6 +30,7 @@ _OFFLINE = [
     ("verify_shorts", False),             # M1 Shorts density + bed library (pure/local)
     ("verify_short_publish", False),      # M1 Short publish gate — must classify as a Short (pure)
     ("verify_d3", False),                 # D3 — audio-design completeness guard (declared vs defect)
+    ("verify_grounding", False),          # A1 grounded research — bounded loop + declared→writer
     ("verify_cohort_playlist", True),     # M1 item 2 — unlisted cohort playlist writes (confined)
     ("verify_d2", True),                  # D2 — job terminal status, explicit live-publish, approval TTL
     ("verify_slice1", True),
