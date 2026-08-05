@@ -31,6 +31,7 @@ _OFFLINE = [
     ("verify_short_publish", False),      # M1 Short publish gate — must classify as a Short (pure)
     ("verify_d3", False),                 # D3 — audio-design completeness guard (declared vs defect)
     ("verify_grounding", False),          # A1 grounded research — bounded loop + declared→writer
+    ("verify_research_order", True),       # A1 conductor — gate BEFORE research (sequence) + resume
     ("verify_cohort_playlist", True),     # M1 item 2 — unlisted cohort playlist writes (confined)
     ("verify_d2", True),                  # D2 — job terminal status, explicit live-publish, approval TTL
     ("verify_slice1", True),
@@ -76,6 +77,20 @@ def _leftover(settings, marks: dict) -> list[str]:
     return dirty
 
 
+# A live verify can fail for reasons that are NOT a code defect — the provider API is unreachable or
+# unfunded. Treat those as ENVIRONMENT (skip), the same as Postgres-down, so a billing/credits issue
+# never masquerades as broken code. (Offline verifies never hit these.)
+_API_DOWN = ("credit balance is too low", "authentication_error", "rate_limit", "BadRequestError",
+             "insufficient_quota", " 401", " 429", "Connection error")
+
+
+def _api_down_reason(text: str) -> str | None:
+    for m in _API_DOWN:
+        if m in text:
+            return m.strip()
+    return None
+
+
 def _run(mod: str) -> tuple[int, str, float, list[str]]:
     t = time.monotonic()
     p = subprocess.run([sys.executable, "-m", f"scripts.{mod}"], capture_output=True, text=True)
@@ -86,6 +101,7 @@ def _run(mod: str) -> tuple[int, str, float, list[str]]:
     # these at the health level so a green CI run and a green local run mean the SAME thing — zero
     # failures — with the environmental delta made EXPLICIT rather than hidden inside a passing verify.
     skips = [f"{mod}: {ln.split('⏭️', 1)[1].strip()}" for ln in lines if "⏭️" in ln]
+    _run.last_output = (p.stdout or "") + (p.stderr or "")   # for API-down detection on live verifies
     return p.returncode, tail.strip()[:80], dur, skips
 
 
@@ -109,8 +125,12 @@ def main() -> None:
     for mod, keyenv in _OPTIONAL_LIVE:
         if os.environ.get(keyenv):
             rc, tail, dur, sk = _run(mod)
-            results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
-            check_skips += sk
+            reason = _api_down_reason(getattr(_run, "last_output", "")) if rc != 0 else None
+            if reason:                                   # provider API unreachable/unfunded → ENVIRONMENT
+                skipped.append(f"{mod} (live API unavailable: {reason} — not a code defect)")
+            else:
+                results.append((mod, "PASS" if rc == 0 else "FAIL", dur, tail))
+                check_skips += sk
         else:
             skipped.append(f"{mod} (no {keyenv} — optional live)")
 

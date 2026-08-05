@@ -241,7 +241,8 @@ async def run():
 
 
 class _FakeWriter:
-    def write(self, *, topic, channel, research, runtime_target_s, n_beats, footage_distribution=None):
+    def write(self, *, topic, channel, research, runtime_target_s, n_beats, footage_distribution=None,
+              facts=None):
         return _script([(1, "B1"), (2, "B2")])
 
 

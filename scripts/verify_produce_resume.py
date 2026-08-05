@@ -74,7 +74,8 @@ class _FakeMusic:
 
 
 class _FakeWriter:
-    def write(self, *, topic, channel, research, runtime_target_s, n_beats, footage_distribution=None):
+    def write(self, *, topic, channel, research, runtime_target_s, n_beats, footage_distribution=None,
+              facts=None):
         return Script(title="Resume Test Film", runtime_target_s=40, word_target=40,
                       facts_used=(Fact("x", True),),
                       beats=(Beat(1, "B1", "wide savanna", "The first beat speaks briefly here now.", 8),

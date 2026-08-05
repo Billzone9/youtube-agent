@@ -159,15 +159,12 @@ def estimate_llm_gbp(*, input_tokens: int, output_tokens: int, tier: str = "qual
     return round(usd * _USD_GBP, 4)
 
 
-# A1 grounded research — HARD CAPS on the agentic loop (PLAN_PHASE1_COSTS.md). The estimate is a CEILING
-# derived from these, not a hope: the research feature MUST import these same constants and enforce them,
-# so a stubborn subject degrades (ships with the facts gathered so far, recorded in a research `declared`
-# map like AudioDesign.declared) rather than iterating to unbounded searches/tokens. Estimate == the
-# worst case the caps permit, so the gate always quotes an amount the run cannot exceed.
-_RESEARCH_MAX_SEARCHES = 8          # ~6 expected; the cap bounds a stubborn subject
-_RESEARCH_MAX_ITERATIONS = 4        # research rounds before we stop and ship partial facts
-_RESEARCH_MAX_INPUT_TOKENS = 60_000   # cumulative input ceiling (2× the ~30k expected)
-_RESEARCH_MAX_OUTPUT_TOKENS = 6_000
+# A1 grounded-research HARD CAPS — imported from the ENFORCEMENT site (authoring.grounding) so the
+# estimate is derived from the exact constants the loop enforces (authoring imports nothing from
+# scheduler, avoiding an import cycle). The estimate is a CEILING: hitting a cap is a declared
+# degradation, never more spend (PLAN_PHASE1_COSTS.md).
+from ..authoring.grounding import (_RESEARCH_MAX_INPUT_TOKENS, _RESEARCH_MAX_ITERATIONS,  # noqa: E402,F401
+                                   _RESEARCH_MAX_OUTPUT_TOKENS, _RESEARCH_MAX_SEARCHES)
 
 
 def estimate_research_cost(*, tier: str = "quality") -> float:

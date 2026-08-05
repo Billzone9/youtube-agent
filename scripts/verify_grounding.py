@@ -107,6 +107,24 @@ def main():
         caught_tok = True
     check("a provider that billed MORE tokens than it reported is caught", caught_tok)
 
+    print("[1c] NOTE 2 — resume idempotency: continue a crashed run, never re-search, cap holds")
+    # run 1 stops early (as if it crashed mid-research after 2 searches)
+    p_a = _NeverDone()
+    rf_run1 = gather_grounded_facts("wolf", p_a, max_searches=5, max_iterations=2)
+    check("run 1 stopped partial after 2 searches", rf_run1.searches_used == 2 and not rf_run1.complete)
+    # run 2 resumes from run 1 — a FRESH provider instance (a re-run), CONTINUES, does not repeat searches
+    p_b = _NeverDone()
+    rf_run2 = gather_grounded_facts("wolf", p_b, max_searches=5, max_iterations=5, prior=rf_run1)
+    check("resume did NOT re-run the first 2 searches (only the remaining 3)", p_b.calls == 3,
+          f"run2 searches={p_b.calls}")
+    check("the cap holds ACROSS the crash+resume (5 total, not 7)", rf_run2.searches_used == 5)
+    check("facts accumulate across resume (2 + 3)", len(rf_run2.facts) == 5)
+    # on_step persists after EACH search → a crash loses at most the in-flight search
+    steps = []
+    gather_grounded_facts("wolf", _NeverDone(), max_searches=3, max_iterations=10, on_step=steps.append)
+    check("on_step fires after each search with the accumulating partial",
+          len(steps) == 3 and steps[-1].searches_used == 3 and len(steps[0].facts) == 1)
+
     print("[2] NOTE 1 — a natural finish is COMPLETE, no degradation declared")
     rf_ok = gather_grounded_facts("lion", _DoneAfter(2), max_searches=8, max_iterations=4)
     check("provider signals done → complete=True, no declared",

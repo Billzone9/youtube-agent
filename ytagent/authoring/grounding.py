@@ -19,9 +19,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from ..scheduler.cost import (_RESEARCH_MAX_INPUT_TOKENS, _RESEARCH_MAX_ITERATIONS,
-                              _RESEARCH_MAX_SEARCHES)
 from .script import Fact
+
+# A1 grounded-research HARD CAPS — defined HERE (the enforcement site) and imported by scheduler.cost so
+# the estimate is derived from the SAME constants the loop enforces. Kept in authoring (which imports
+# nothing from scheduler) to avoid a scheduler↔produce↔grounding import cycle. The estimate is a CEILING:
+# hitting a cap is a declared degradation, never more spend (PLAN_PHASE1_COSTS.md).
+_RESEARCH_MAX_SEARCHES = 8          # ~6 expected; the cap bounds a stubborn subject
+_RESEARCH_MAX_ITERATIONS = 4        # research rounds before we stop and ship partial facts
+_RESEARCH_MAX_INPUT_TOKENS = 60_000   # cumulative input ceiling (2× the ~30k expected)
+_RESEARCH_MAX_OUTPUT_TOKENS = 6_000
 
 
 @dataclass(frozen=True)
@@ -82,16 +89,25 @@ def gather_grounded_facts(
     max_searches: int = _RESEARCH_MAX_SEARCHES,
     max_iterations: int = _RESEARCH_MAX_ITERATIONS,
     max_input_tokens: int = _RESEARCH_MAX_INPUT_TOKENS,
+    prior: "ResearchFacts | None" = None,
+    on_step=None,
 ) -> ResearchFacts:
     """Bounded fact-gathering. The caps are enforced BEFORE each search — the loop stops AT a cap, never
-    after paying past it. A cap → a `declared` entry + `complete=False`; a natural `done` → `complete=True`."""
-    facts: list[Fact] = []
+    after paying past it. A cap → a `declared` entry + `complete=False`; a natural `done` → `complete=True`.
+
+    RESUME (money-stage idempotency, like TTS): pass `prior` (a partial ResearchFacts reloaded from a
+    crashed run) to CONTINUE from its `searches_used`/`input_tokens`/facts — already-done searches are
+    never repeated, and because the caps count from the seeded totals, the crash+resume total still
+    cannot exceed the ceiling. `on_step(partial)` is called after EACH search so the caller can persist
+    progress, so a crash loses at most the in-flight search, not the whole run."""
+    facts: list[Fact] = list(prior.facts) if prior else []
     declared: dict = {}
-    searches_used = 0
-    input_tokens = 0
+    searches_used = prior.searches_used if prior else 0     # seed from the reloaded run → caps continue
+    input_tokens = prior.input_tokens if prior else 0
     complete = False
 
-    for _ in range(max_iterations):                       # iteration cap: cannot START a run past it
+    remaining_iters = max_iterations - searches_used        # continue within the SAME iteration budget
+    for _ in range(max(0, remaining_iters)):
         if searches_used >= max_searches:                 # search cap — checked BEFORE the spend
             declared["research"] = f"capped at {max_searches} searches — partial ({len(facts)} facts)"
             break
@@ -102,6 +118,9 @@ def gather_grounded_facts(
         searches_used += out.searches
         input_tokens += out.input_tokens
         facts.extend(out.facts)
+        if on_step is not None:                            # persist progress → resume never re-searches
+            on_step(ResearchFacts(facts=tuple(facts), declared={}, complete=False,
+                                  searches_used=searches_used, input_tokens=input_tokens))
         if out.done:
             complete = True
             break

@@ -21,6 +21,7 @@ from dataclasses import asdict, replace as dc_replace
 
 from . import repo
 from .audio_design import assert_audio_complete, generate_audio, plan_cues
+from .authoring.grounding import (ResearchFacts, gather_grounded_facts, reconcile_research_usage)
 from .assembly import assemble_spec, bind_edit_spec
 from .assembly import qc as aqc
 from .assembly.beds import pick_bed
@@ -34,7 +35,7 @@ from .metadata.description import generate_description
 from .metadata.llm_writer import LLMWriter
 from .metadata.research import UnavailableResearch
 from .orchestrator import assembly_ping_text, submit_video_for_approval
-from .scheduler.cost import estimate_production_cost, estimate_short_cost
+from .scheduler.cost import estimate_production_cost, estimate_research_cost, estimate_short_cost
 from .sourcing import NoMatch, source_clips_for_brief, source_film
 from .tts import TTSQuotaError, TTSScopeError
 
@@ -445,7 +446,8 @@ def _before(done: str, stage: str) -> bool:
     return _STAGES.index(stage) > d
 
 
-async def _st_script(conn, state, *, script_writer, channel, usage_sink, pricing, providers, llm):
+async def _st_script(conn, state, *, script_writer, channel, usage_sink, pricing, providers, llm,
+                     facts=None):
     if state.get("script_path") and os.path.exists(state["script_path"]):
         return _load_script_json(state["script_path"])   # resume: reload, no LLM re-spend
     cfg = state["cfg"]
@@ -470,7 +472,7 @@ async def _st_script(conn, state, *, script_writer, channel, usage_sink, pricing
                            data={"distribution": dist, "verdict": rep.verdict})
     script = script_writer.write(topic=state["topic"], channel=channel, research=UnavailableResearch(),
                                  footage_distribution=dist, runtime_target_s=cfg.get("runtime_target_s", 150),
-                                 n_beats=cfg.get("n_beats", 4))
+                                 n_beats=cfg.get("n_beats", 4), facts=facts)   # A1 grounded facts (or None)
     await _drain_llm(conn, usage_sink, pricing, channel_id=state["channel_id"], job_id=state["job_id"])
     path = os.path.join(state["root"], "script.json")
     _write_script_json(path, script)
@@ -498,12 +500,12 @@ async def _st_source(conn, state, *, providers, llm, channel, script):
 
 async def _spend_gate(conn, state, script, *, tts=None, per_job_threshold_gbp, enforce_ceiling, channel,
                       key_credit_cap=None):
-    # include_research reflects REALITY: only quote the research ceiling when the conductor actually runs
-    # grounded research (state['research'] set once a research provider is wired). Until then, quoting it
-    # would over-estimate a stage that doesn't run — the vision problem in reverse. Flip on WITH the
-    # research call, so the estimate always matches what spends (PLAN_PHASE1_COSTS.md).
+    # This is the TTS/music gate — it estimates FORWARD spend only. Research is a PRIOR stage (it feeds
+    # the script, so it ran and was gated BEFORE this point), and its spend is already in month-to-date;
+    # including it here would double-count it against the rolling ceiling. So include_research=False.
+    # Research is quoted before IT spends by its own pre-gate in _st_research (PLAN_PHASE1_COSTS.md).
     est = estimate_production_cost(script, channel, sfx_specs=(state.get("cfg") or {}).get("sfx_specs"),
-                                   include_research=bool(state.get("research")))
+                                   include_research=False)
     state["estimate_gbp"] = est.total_gbp
     state["estimate"] = asdict(est)                       # persist full breakdown for estimate-vs-actual audit
     await record_event(conn, "spend_estimate",
@@ -591,10 +593,96 @@ async def _st_design(conn, state, *, music, channel, script):
     return dz
 
 
+# --- A1 grounded research stage (feeds the script; gated BEFORE it spends) --------------------------
+def _serialize_research(rf: ResearchFacts) -> dict:
+    return {"facts": [{"claim": f.claim, "established": f.established} for f in rf.facts],
+            "declared": rf.declared, "complete": rf.complete,
+            "searches_used": rf.searches_used, "input_tokens": rf.input_tokens}
+
+
+def _deserialize_research(d: dict) -> ResearchFacts:
+    from .authoring.script import Fact
+    return ResearchFacts(
+        facts=tuple(Fact(claim=f.get("claim", ""), established=bool(f.get("established", True)))
+                    for f in d.get("facts", [])),
+        declared=d.get("declared") or {}, complete=bool(d.get("complete", False)),
+        searches_used=int(d.get("searches_used", 0)), input_tokens=int(d.get("input_tokens", 0)))
+
+
+async def _research_actual_usage(conn, job_id: int) -> dict:
+    """The ledger's ACTUAL grounded-research spend for this job — the source of truth the loop's
+    self-reported counts are reconciled against (note 1). The real provider ledgers each research call
+    with context 'research' + records web_search_requests; absent rows → zeros (reconcile trivially OK)."""
+    cur = await conn.execute(
+        "SELECT COALESCE(SUM((metadata->>'input_tokens')::int),0) AS toks, "
+        "COALESCE(SUM((metadata->>'web_search_requests')::int),0) AS searches "
+        "FROM cost_ledger WHERE job_id=%s AND metadata->>'context'='research'", [job_id])
+    row = await cur.fetchone()
+    return {"input_tokens": int(row["toks"] or 0), "searches": int(row["searches"] or 0)}
+
+
+async def _research_gate(conn, state, *, channel, per_job_threshold_gbp, enforce_ceiling) -> None:
+    """Quote grounded research (its CEILING) and gate it BEFORE it spends — research can't run when the
+    budget won't allow it. Mirrors the pounds side of _spend_gate; research is Anthropic-only (no EL
+    credit gate)."""
+    research_gbp = estimate_research_cost()
+    await record_event(conn, "research_estimate",
+                       message=f"grounded research ceiling £{research_gbp:.2f} (quoted before it spends)",
+                       channel_id=state["channel_id"], job_id=state["job_id"],
+                       data={"research_ceiling_gbp": research_gbp})
+    if per_job_threshold_gbp is not None and research_gbp > float(per_job_threshold_gbp):
+        raise SpendGatePause("per_job", research_gbp, limit=float(per_job_threshold_gbp),
+                             breakdown={"research": research_gbp})
+    if enforce_ceiling:
+        bud = await budget_status(conn)
+        mtd, ceil = float(bud["month_spend_gbp"]), float(bud["ceiling_gbp"])
+        if mtd + research_gbp > ceil:
+            raise SpendGatePause("ceiling", research_gbp, limit=ceil, mtd=mtd,
+                                 breakdown={"research": research_gbp})
+
+
+async def _st_research(conn, state, *, research_provider, channel, per_job_threshold_gbp=None,
+                       enforce_ceiling=False) -> "ResearchFacts | None":
+    """Grounded research — feeds the script. Returns ResearchFacts, or None when no provider is wired.
+    ORDER: the pre-gate quotes research BEFORE gather_grounded_facts spends. RESUME (like TTS): a COMPLETE
+    result reloads and skips (no re-gate, no re-spend); a crashed (incomplete) one CONTINUES from where it
+    stopped (never re-searches). Progress persists after each search. The loop's self-reported counts are
+    RECONCILED against the ledger's actual spend (a provider that under-reported is a caught defect)."""
+    if research_provider is None:
+        return None
+    saved = state.get("research")
+    prior = None
+    if saved is not None:
+        rf = _deserialize_research(saved)
+        if rf.complete:
+            return rf                                     # done → reload, no re-gate, no re-spend
+        prior = rf                                        # crashed mid-research → continue from here
+    if prior is None:                                     # only a FRESH attempt is gated (resume already paid)
+        await _research_gate(conn, state, channel=channel,
+                             per_job_threshold_gbp=per_job_threshold_gbp, enforce_ceiling=enforce_ceiling)
+
+    def _persist(partial: ResearchFacts) -> None:
+        state["research"] = _serialize_research(partial)  # after EACH search → a crash loses ≤ one search
+
+    result = await asyncio.to_thread(gather_grounded_facts, state["topic"], research_provider,
+                                     prior=prior, on_step=_persist)
+    actual = await _research_actual_usage(conn, state["job_id"])   # RECONCILE against billed truth (note 1)
+    reconcile_research_usage(result, actual_input_tokens=actual["input_tokens"],
+                             actual_searches=actual["searches"])
+    state["research"] = _serialize_research(result)
+    await record_event(conn, "researched",
+                       message=f"{len(result.facts)} facts, {result.searches_used} searches"
+                               + (f" — PARTIAL: {result.declared.get('research')}" if result.partial else ""),
+                       channel_id=state["channel_id"], job_id=state["job_id"],
+                       data={"facts": len(result.facts), "searches": result.searches_used,
+                             "declared": result.declared, "complete": result.complete})
+    return result
+
+
 async def run_production(conn, notifier, *, job, channel, providers, tts, music, llm_provider,
                          script_writer, usage_sink, description_exemplar, publisher, chat_id,
                          per_job_threshold_gbp=None, enforce_ceiling=False, key_credit_cap=None,
-                         crash_after=frozenset()) -> dict:
+                         research_provider=None, crash_after=frozenset()) -> dict:
     """Drive a production job through the checkpointed stages, resuming from wherever it left off. Money
     stages reload their artifacts on resume (never re-charge). `crash_after` is TEST-ONLY. A SpendGatePause
     (4→5 gate) or _CrashInjected propagates WITHOUT marking the job failed — the state is preserved for a
@@ -607,9 +695,14 @@ async def run_production(conn, notifier, *, job, channel, providers, tts, music,
     done = state.get("stage") or ""
     pricing = await repo.ledger.get_llm_pricing(conn)
     try:
+        # GROUNDED RESEARCH — BEFORE the script (it feeds the script). Its pre-gate quotes research
+        # before it spends; resume reloads a complete result or continues a crashed one. None ⇒ no provider.
+        research = await _st_research(conn, state, research_provider=research_provider, channel=channel,
+                                      per_job_threshold_gbp=per_job_threshold_gbp,
+                                      enforce_ceiling=enforce_ceiling)
         script = await _st_script(conn, state, script_writer=script_writer, channel=channel,
                                   usage_sink=usage_sink, pricing=pricing, providers=providers,
-                                  llm=llm_provider)
+                                  llm=llm_provider, facts=research)
         if _before(done, "scripted"):
             await _maybe_checkpoint(conn, state, "scripted", crash_after)
 
