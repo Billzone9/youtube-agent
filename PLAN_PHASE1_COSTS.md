@@ -80,6 +80,16 @@ trend shifts that don't move daily at this scale).
 | weekly | £0.41 (£1.20) | £4.10 (£12) |
 | daily | £2.85 (£8.5) | £28.5 (£85) |
 
+### ⚠️ OPEN DECISION (Banks) — the unattended-analysis sub-budget
+**How much of the £200 global monthly ceiling may UNATTENDED competitor/trend analysis consume before
+its gate pauses it?** This is Banks's to decide; it is deliberately NOT picked here. It **gates the
+build** of the trend gate: the pre-run gate needs a number to check against beyond the global ceiling,
+so that scheduled analysis spend cannot silently crowd out production/publishing budget. Frame:
+unattended spend is the category that most needs a hard sub-cap (it accumulates across channels × weeks
+with no human in the loop). Until Banks sets the sub-budget, competitor/trend analysis is not built. The
+per-run cost (~£0.095) is not the risk; the ACCUMULATION without a dedicated ceiling is. State a figure
+(a fixed £/month, or a % of the £200) and the gate is buildable; leave it open and the feature waits.
+
 **Gate? YES — this is the category that needs one.** It is **unattended, scheduled, recurring** spend.
 A ledger row records *after* the money is gone; that is too late for spend no human is watching. The
 real risks are (a) **accumulation** (frequency × channels × time) and (b) a **runaway loop** (a retry or
