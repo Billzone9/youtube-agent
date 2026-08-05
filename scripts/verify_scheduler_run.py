@@ -124,10 +124,12 @@ def _mk_short(mode="submit"):
     return _fake
 
 
-def _deps(ch, notif, *, tts=None, recurring_allowance=None):
+def _deps(ch, notif, *, tts=None, recurring_allowance=None, enforce_cadence_budget=False):
+    # default enforce=False here so tests NOT exercising the cadence gate state that intent explicitly
+    # (the production Deps default is True/safe); the gate tests pass enforce_cadence_budget=True.
     return Deps(channel=ch, providers=[], tts=tts or object(), music=object(), llm=object(),
                 usage_sink=object(), notifier=notif, publisher=SimpleNamespace(mode="dry_run"), chat_id="0",
-                recurring_allowance=recurring_allowance)
+                enforce_cadence_budget=enforce_cadence_budget, recurring_allowance=recurring_allowance)
 
 
 async def run():
@@ -257,7 +259,8 @@ async def run():
         # THE FAILING CASE: key remaining HUGE (rollover), recurring EXHAUSTED → must PAUSE, not commission.
         tts_exhausted = _FakeTTS({"remaining": 50000, "remaining_recurring": 100})
         notif = _Notifier()
-        await tick(conn, _deps(ch, notif, tts=tts_exhausted, recurring_allowance=30000))
+        await tick(conn, _deps(ch, notif, tts=tts_exhausted, recurring_allowance=30000,
+                               enforce_cadence_budget=True))
         pbx = await repo.playbooks.get_by_channel(conn, cid)
         # a film needs ~6850 EL; remaining_recurring=100 < 6850 → pause. If the gate read the KEY remaining
         # (50000) instead, 6850 < 50000 → it would PROCEED. So paused_ceiling IS the proof it read the right field.
@@ -270,10 +273,36 @@ async def run():
         await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
         await _reset_pb(conn, cid, pool=["good7b"])
         notif = _Notifier()
-        await tick(conn, _deps(ch, notif, tts=_FakeTTS(None), recurring_allowance=30000))
+        await tick(conn, _deps(ch, notif, tts=_FakeTTS(None), recurring_allowance=30000,
+                               enforce_cadence_budget=True))
         check("credit_status None → PAUSED (fail closed, not commissioning blind)",
               (await repo.playbooks.get_by_channel(conn, cid))["state"] == "paused_ceiling"
               and any("recurring" in m.lower() for m in notif.msgs))
+
+        print("[7c] gate ENABLED + allowance ABSENT → PAUSED (absence of a number ≠ no enforcement)")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["good7c"])
+        produce.produce_video = _mk_produce("submit")       # would succeed IF the gate let it through
+        notif = _Notifier()
+        # THE FAILING CASE: enforcement ON, but recurring_allowance is None (unconfigured) → must PAUSE,
+        # never commission blind. This is the exact latent decision-by-absence, now made explicit.
+        await tick(conn, _deps(ch, notif, tts=_FakeTTS({"remaining": 50000, "remaining_recurring": 99999}),
+                               recurring_allowance=None, enforce_cadence_budget=True))
+        pbc = await repo.playbooks.get_by_channel(conn, cid)
+        check("enabled + no allowance → PAUSED (not proceeded)", pbc["state"] == "paused_ceiling",
+              pbc["state"])
+        check("nothing commissioned + the alert names the missing allowance",
+              len(await repo.subjects.list_for_channel(conn, cid)) == 0
+              and any("allowance" in m.lower() for m in notif.msgs))
+
+        print("[7d] gate explicitly DISABLED (enforce=False) → proceeds even with no allowance (a stated choice)")
+        await conn.execute("DELETE FROM channel_subjects WHERE channel_id=%s", [cid])
+        await _reset_pb(conn, cid, pool=["good7d"])
+        produce.produce_video = _mk_produce("submit")
+        notif = _Notifier()
+        await tick(conn, _deps(ch, notif, recurring_allowance=None, enforce_cadence_budget=False))
+        check("explicitly disabled → NOT paused by the cadence gate",
+              (await repo.playbooks.get_by_channel(conn, cid))["state"] != "paused_ceiling")
 
         print("[8] format-mix routes 9:16 to produce_short; NoMatch skips ONE (no 3× retry), bed→blocked")
         produce.produce_short = _mk_short("submit")

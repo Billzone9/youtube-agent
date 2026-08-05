@@ -63,7 +63,12 @@ class Deps:
     chat_id: str
     description_exemplar: object = None
     key_credit_cap: int | None = None
-    recurring_allowance: int | None = None       # RECURRING monthly EL credits — the CADENCE gate (note 2)
+    # The cadence budget gate is TWO separate things, deliberately (2026-08-05): whether it is ENABLED
+    # (enforce_cadence_budget — an explicit choice, default ON/safe) vs the NUMBER it checks against
+    # (recurring_allowance). Enabled + a missing/unreadable number ⇒ PAUSE, never commission blind:
+    # absence of the number must NOT silently mean absence of enforcement.
+    enforce_cadence_budget: bool = True
+    recurring_allowance: int | None = None       # RECURRING monthly EL credits — the number the gate checks
     now: datetime = None
     summary: dict = field(default_factory=lambda: {
         "resumed": [], "commissioned": [], "skipped_infeasible": [], "submitted": [],
@@ -174,13 +179,23 @@ async def _pick_format(conn, pb) -> str:
 
 async def _recurring_gate(conn, pb, deps: Deps, fmt: str) -> bool:
     """CADENCE gate on the RECURRING monthly allowance (note 2) — NOT the key cap (which includes one-off
-    rollover). Returns True to proceed, False if it PAUSED. FAILS CLOSED: an unreadable credit status
-    pauses rather than commissioning blind (the OPPOSITE of the per-job key gate, which degrades open —
-    per-job = don't-block-on-a-blip; cadence = don't-over-commit-blind). Off (not degraded) when no
-    recurring_allowance is configured."""
-    if deps.recurring_allowance is None:
-        return True
+    rollover). Returns True to proceed, False if it PAUSED.
+
+    TWO separate things (2026-08-05): `enforce_cadence_budget` decides whether the gate RUNS (an explicit
+    choice, default ON); `recurring_allowance` supplies the NUMBER. When ENABLED, it FAILS CLOSED on any
+    reason it cannot confirm the budget — a MISSING allowance, an UNREADABLE status, or an exhausted
+    balance all PAUSE. Absence of the number is NOT permission to commission blind. Only an explicit
+    `enforce_cadence_budget=False` disables it (a stated choice, not an unset value)."""
+    if not deps.enforce_cadence_budget:
+        return True                                  # explicitly DISABLED — a stated choice, not absence
     est = _SHORT_EL_CREDITS if fmt == "9:16" else _FILM_EL_CREDITS
+    if deps.recurring_allowance is None:             # ENABLED but no number → FAIL CLOSED (the note's core)
+        await repo.playbooks.set_state(conn, pb["id"], "paused_ceiling")
+        await _alert(deps, f"⏸️ <b>{deps.channel['name']}</b> cadence PAUSED — the cadence budget gate is "
+                           f"ENABLED but NO recurring allowance is configured. Not commissioning blind; set "
+                           f"the allowance (or explicitly disable enforcement). Absence of a number ≠ no enforcement.")
+        deps.summary["paused"].append(("recurring", "no_allowance"))
+        return False
     status_fn = getattr(deps.tts, "credit_status", None)
     cs = (await asyncio.to_thread(status_fn, key_cap=deps.key_credit_cap,
                                   recurring_allowance=deps.recurring_allowance)) if status_fn else None

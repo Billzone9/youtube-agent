@@ -529,14 +529,30 @@ async def _spend_gate(conn, state, script, *, tts=None, per_job_threshold_gbp, e
 async def _credit_gate(conn, state, script, *, tts, est, key_credit_cap):
     """Compare the ElevenLabs credits STILL TO SPEND (unvoiced beats + ungenerated music — already-done
     stages never re-charge) against what the key can actually fund. PAUSE before any spend if short, so
-    Banks raises the cap BEFORE a half-produced film, not after. Degrades silently if the provider can't
-    report credits (the mid-run TTSQuotaError fail-fast is the backstop)."""
+    Banks raises the cap BEFORE a half-produced film, not after.
+
+    FAIL-OPEN on an unreadable balance is a DELIBERATE DECISION (2026-08-05, reviewed — not inherited),
+    and the split from the cadence gate (which fails CLOSED) is justified by attended-vs-unattended PLUS
+    three structural backstops this per-job gate has and the cadence gate does not:
+      (1) the ElevenLabs key's HARD credit cap — the key PHYSICALLY cannot spend past it (structural,
+          not behavioural); that, not this gate, is the real last line, and it holds regardless;
+      (2) the mid-run TTSQuotaError fail-fast (`_synthesize_beat`) — a genuinely short balance fails fast
+          on the beat that hits the cap (the exact job-276 protection);
+      (3) resume idempotency — voiced beats reload and never re-charge, so any partial spend before a
+          fail is recoverable.
+    So this gate is a pre-flight COURTESY (pause upfront to avoid a wasted partial run), not the sole
+    protection. Failing it open on a transient status-read blip costs at most a small, key-capped,
+    resume-recoverable partial spend, and avoids false-pausing a legitimate ATTENDED run. The cadence
+    gate has none of these per-run backstops and compounds across many unattended runs, so it fails
+    closed. The skip is RECORDED (credit_check_skipped), never silent."""
     status_fn = getattr(tts, "credit_status", None)
-    if status_fn is None:
+    if status_fn is None:                # provider can't report credits at all (non-EL/stub) → no gate to run
         return
     cs = await asyncio.to_thread(status_fn, key_cap=key_credit_cap)
-    if cs is None:                       # provider/network couldn't report — don't block on infra
-        await record_event(conn, "credit_check_skipped", message="ElevenLabs credit status unavailable",
+    if cs is None:                       # EL balance UNREADABLE — fail OPEN by decision (see docstring),
+        await record_event(conn, "credit_check_skipped",   # backstops (1)-(3) hold; the skip is logged
+                           message="ElevenLabs credit status unavailable — proceeding (key cap + mid-run "
+                                   "fail-fast + resume are the backstops); credit gate skipped this run",
                            channel_id=state["channel_id"], job_id=state["job_id"])
         return
     workdir = state["workdir"]

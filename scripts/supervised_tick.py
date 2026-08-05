@@ -76,6 +76,7 @@ async def run():
     deps = Deps(channel=ch, providers=providers, tts=tts, music=music, llm=llm, usage_sink=sink,
                 notifier=notifier, publisher=DryRunPublisher(), chat_id=settings.chat_id,
                 key_credit_cap=settings.elevenlabs_key_credit_cap,
+                enforce_cadence_budget=True,   # a real tick enforces; allowance supplies the number
                 recurring_allowance=settings.elevenlabs_recurring_allowance_cr)
 
     t0 = time.monotonic()
