@@ -94,12 +94,24 @@ def main():
           == round(18.0 * 0.79, 4), f"£{cost.estimate_llm_gbp(input_tokens=10**6, output_tokens=10**6)}")
     research = cost.estimate_research_cost()
     trend = cost.estimate_trend_analysis_cost()
-    check("grounded research ≈ £0.17/video (documented)", 0.15 <= research <= 0.19, f"£{research}")
+    # research must be a CEILING derived from the loop's hard caps — NOT an unbounded hope (the vision
+    # volume-omission lesson). Assert the estimate EQUALS the worst case the caps permit.
+    ceiling = cost.estimate_llm_gbp(input_tokens=cost._RESEARCH_MAX_INPUT_TOKENS,
+                                    output_tokens=cost._RESEARCH_MAX_OUTPUT_TOKENS,
+                                    tier="quality", web_searches=cost._RESEARCH_MAX_SEARCHES)
+    check("grounded research estimate == the cap-derived CEILING (not a hope)", research == ceiling,
+          f"£{research} == £{ceiling}")
+    check("the ceiling exceeds the ~£0.17 EXPECTED case (it bounds the worst case)",
+          research > cost.estimate_llm_gbp(input_tokens=30_000, output_tokens=4_000, web_searches=6),
+          f"£{research}")
+    check("the loop caps are finite + enforced-in-code constants",
+          cost._RESEARCH_MAX_SEARCHES > 0 and cost._RESEARCH_MAX_ITERATIONS > 0
+          and cost._RESEARCH_MAX_INPUT_TOKENS > 0)
     check("trend analysis ≈ £0.095/run (documented)", 0.08 <= trend <= 0.11, f"£{trend}")
     check("both are non-zero — no un-estimated LLM feature", research > 0 and trend > 0)
     check("cheaper tier lowers the estimate (tier is honoured)",
           cost.estimate_research_cost(tier="cheap") < research)
-    check("trend scales with the batch analysed",
+    check("trend scales with the batch analysed (its batch IS its bound)",
           cost.estimate_trend_analysis_cost(n_competitors=20) > trend)
 
     print("\n" + ("ALL PASSED" if ok else "FAILED"))

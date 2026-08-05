@@ -153,12 +153,26 @@ def estimate_llm_gbp(*, input_tokens: int, output_tokens: int, tier: str = "qual
     return round(usd * _USD_GBP, 4)
 
 
+# A1 grounded research — HARD CAPS on the agentic loop (PLAN_PHASE1_COSTS.md). The estimate is a CEILING
+# derived from these, not a hope: the research feature MUST import these same constants and enforce them,
+# so a stubborn subject degrades (ships with the facts gathered so far, recorded in a research `declared`
+# map like AudioDesign.declared) rather than iterating to unbounded searches/tokens. Estimate == the
+# worst case the caps permit, so the gate always quotes an amount the run cannot exceed.
+_RESEARCH_MAX_SEARCHES = 8          # ~6 expected; the cap bounds a stubborn subject
+_RESEARCH_MAX_ITERATIONS = 4        # research rounds before we stop and ship partial facts
+_RESEARCH_MAX_INPUT_TOKENS = 60_000   # cumulative input ceiling (2× the ~30k expected)
+_RESEARCH_MAX_OUTPUT_TOKENS = 6_000
+
+
 def estimate_research_cost(*, tier: str = "quality") -> float:
-    """A1 grounded research — ONE per-video pass (assumptions in PLAN_PHASE1_COSTS.md): ~30k in + ~4k out
-    + ~6 web searches. ATTENDED (inside a production run) → folds into estimate_production_cost, no new
-    gate. Sonnet ≈ £0.17/video. Replace the token assumptions with measured actuals after the first runs
-    (as vision was calibrated)."""
-    return estimate_llm_gbp(input_tokens=30_000, output_tokens=4_000, tier=tier, web_searches=6)
+    """A1 grounded research — the CEILING cost of one per-video pass, computed from the loop's HARD CAPS
+    (`_RESEARCH_MAX_*`), NOT the expected case. Because the feature enforces the same caps, the run
+    cannot exceed this: hitting a cap is a DECLARED degradation (ship the facts gathered so far), never
+    more spend. ATTENDED (inside a production run) → folds into estimate_production_cost, no new gate.
+    Sonnet ceiling ≈ £0.28/video (expected ~£0.17). Recalibrate the caps if measured runs sit far under."""
+    return estimate_llm_gbp(input_tokens=_RESEARCH_MAX_INPUT_TOKENS,
+                            output_tokens=_RESEARCH_MAX_OUTPUT_TOKENS, tier=tier,
+                            web_searches=_RESEARCH_MAX_SEARCHES)
 
 
 def estimate_trend_analysis_cost(*, n_competitors: int = 10, videos_each: int = 20,

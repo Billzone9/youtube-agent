@@ -20,15 +20,31 @@ synthesis. **Model: Sonnet** (facts underpin the script — Haiku too weak for f
 overkill). If a separate grounded provider (e.g. Gemini) is chosen later, its cost replaces this; this
 costs the **Anthropic** path Banks asked about.
 
-**One run (Sonnet):**
+**BOUNDED BY CONSTRUCTION — the estimate is a CEILING, not a hope.** An agentic loop with no cap is the
+vision mistake reborn: the *rate* is right, the *volume* is unbounded — a stubborn subject could iterate
+to 15+ searches and 90k input with nothing stopping it. So the loop has HARD CAPS enforced in code
+(`cost._RESEARCH_MAX_*`), and the estimate is computed FROM those caps, so the run cannot exceed it:
+| cap | value |
+|---|---|
+| max web searches | **8** (~6 expected) |
+| max iterations (research rounds) | **4** |
+| max cumulative input tokens | **60k** (2× the ~30k expected) |
+| max output tokens | **6k** |
+
+Hitting any cap is a **DECLARED degradation** (mirroring `AudioDesign.declared` from D3): research
+**stops and ships with the facts gathered so far**, recorded in a research `declared` map — never more
+spend. The feature imports the SAME constants the estimate uses, so estimate == enforced ceiling.
+
+**Ceiling cost (Sonnet, the worst case the caps permit):**
 | item | tokens | cost |
 |---|---|---|
-| input (reading sources across the loop) | ~30k | 30k × $3/M = $0.090 |
-| output (fact list + reasoning) | ~4k | 4k × $15/M = $0.060 |
-| web search (~6 × $0.01) | — | $0.060 |
-| **total** | | **≈ $0.21 ≈ £0.17** → ×3 **budget £0.30–0.50/video** |
+| input (cap) | 60k | 60k × $3/M = $0.180 |
+| output (cap) | 6k | 6k × $15/M = $0.090 |
+| web search (cap: 8 × $0.01) | — | $0.080 |
+| **ceiling** | | **≈ $0.35 ≈ £0.28/video** (expected ~£0.17) |
 
-*(Opus instead would be ~$0.81 ≈ £0.64 → ×3 ~£1.30. Recommend Sonnet.)*
+The gate quotes the £0.28 ceiling, so a production can never be surprised by a runaway research loop.
+*(Opus would ~2.9× this. Recommend Sonnet.)*
 
 **How often:** once per video that gets research — long-form primarily (Shorts likely skip deep
 research). At the A′ cadence (~2 long-form/mo) → **~£0.60–1.00/mo**; even weekly long-form → ~£1.30–2.00/mo.
@@ -77,10 +93,10 @@ an over-eager agentic analysis) burning budget with nobody present. So, before e
 ---
 
 ## Bottom line (the decision Banks asked for)
-| feature | one run | frequency | attended? | needs a gate? |
-|---|---|---|---|---|
-| Grounded research | £0.17 (×3 £0.30–0.50) | per long-form video | **yes** (in a production run) | **No new gate** — add to `estimate_production_cost`; the existing per-job gate covers it |
-| Competitor/trend | £0.095 (×3 £0.20–0.30) | weekly per channel | **no** (scheduled) | **Yes** — pre-run, fail-closed budget gate + a dedicated sub-budget; not just a ledger row |
+| feature | one run (ceiling) | frequency | attended? | bounded? | needs a gate? |
+|---|---|---|---|---|---|
+| Grounded research | **£0.28 ceiling** (exp ~£0.17) | per long-form video | **yes** (in a production run) | **hard caps on the loop** (searches/iters/tokens) → cap = declared degradation | **No new gate** — add the ceiling to `estimate_production_cost`; the existing per-job gate covers it |
+| Competitor/trend | £0.095/run | weekly per channel | **no** (scheduled) | batch size IS the bound (no loop) | **Yes** — pre-run, fail-closed budget gate + a dedicated sub-budget; not just a ledger row |
 
 **Build order implication:** for BOTH, the **cost model (an `estimate_*` function + regression) is the
 first artifact, before the feature** — so spend is estimated and gated from the first run, never
